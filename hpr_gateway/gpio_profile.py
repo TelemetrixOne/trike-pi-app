@@ -38,8 +38,9 @@ def validate_gpio(gpio, *, strict=False):
                 continue
             pin(item.get(key, item.get("pin")), f"{path}.{key}")
             if collection == "circuits":
-                if item.get("boot_default") not in ("ON", "OFF"):
-                    raise ValueError(f"{path}.boot_default must be ON or OFF")
+                allowed_defaults = ("ON", "OFF", "AUTO") if item.get("control_type") == "headlight_mode" else ("ON", "OFF")
+                if item.get("boot_default") not in allowed_defaults:
+                    raise ValueError(f"{path}.boot_default must be one of {', '.join(allowed_defaults)}")
                 if strict and type(item.get("output_active_high")) is not bool:
                     raise ValueError(f"{path}.output_active_high is UNKNOWN_REVIEW_REQUIRED")
                 for switch in ("switch_pin", "switch_pin_on", "switch_pin_auto"):

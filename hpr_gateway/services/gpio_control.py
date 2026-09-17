@@ -43,6 +43,7 @@ LOG = logging.getLogger("hpr_gpio_control")
 
 STATE_ON = "ON"
 STATE_OFF = "OFF"
+HEADLIGHT_MODE = "headlight_mode"
 
 SOURCE_LOCAL = "LOCAL"
 SOURCE_REMOTE = "REMOTE"
@@ -122,6 +123,7 @@ def configure(config: HprConfig) -> None:
     for name, item in enabled_items(gpio.get("circuits", {})):
         circuits[name] = {
             "enabled": True,
+            "control_type": str(item.get("control_type", "binary")),
             "output_pin": int(item.get("output_pin", item.get("pin"))),
             "boot_default": str(item.get("boot_default", "OFF")),
             "output_active_high": bool(item.get("output_active_high", True)),
@@ -180,6 +182,7 @@ class CircuitConfig:
     output_pin: int
     boot_default: str
     output_active_high: bool
+    control_type: str = "binary"
 
     switch_mode: str = MODE_BINARY
 
@@ -207,6 +210,7 @@ class CircuitRuntime:
     requested_state: str
     effective_state: str
     source: str
+    mode: Optional[str] = None
     remote_pulse_until_monotonic: Optional[float] = None
     ambient_candidate_state: Optional[str] = None
     ambient_candidate_since_monotonic: Optional[float] = None
@@ -682,6 +686,7 @@ class GPIOControlService:
                     output_pin=int(cfg["output_pin"]),
                     boot_default=cfg["boot_default"],
                     output_active_high=bool(cfg["output_active_high"]),
+                    control_type=str(cfg.get("control_type", "binary")),
                     switch_mode=switch_mode,
                     switch_pin=cfg.get("switch_pin"),
                     switch_pull_up=cfg.get("switch_pull_up", True),
@@ -695,10 +700,12 @@ class GPIOControlService:
                     auto_off_above_pct=cfg.get("auto_off_above_pct"),
                 )
 
+                is_headlight_mode = circuit.control_type == HEADLIGHT_MODE
+                initial_state = circuit.boot_default if not is_headlight_mode or circuit.boot_default != "AUTO" else STATE_OFF
                 output = OutputDevice(
                     pin=circuit.output_pin,
                     active_high=circuit.output_active_high,
-                    initial_value=(circuit.boot_default == STATE_ON),
+                    initial_value=(initial_state == STATE_ON),
                 )
 
                 switch = None
@@ -739,9 +746,10 @@ class GPIOControlService:
                     switch=switch,
                     switch_on=switch_on,
                     switch_auto=switch_auto,
-                    requested_state=circuit.boot_default,
-                    effective_state=circuit.boot_default,
+                    requested_state=initial_state,
+                    effective_state=initial_state,
                     source=SOURCE_REMOTE,
+                    mode=circuit.boot_default.upper() if is_headlight_mode else None,
                 )
                 self._circuits[circuit_key] = runtime
 
@@ -877,6 +885,10 @@ class GPIOControlService:
     def _ambient_auto_enabled(self, runtime: CircuitRuntime) -> bool:
         return bool(AMBIENT_AUTO.get("enabled", False)) and runtime.config.name == "headlight"
 
+    @staticmethod
+    def _is_headlight_mode(runtime: CircuitRuntime) -> bool:
+        return runtime.config.name == "headlight" and runtime.config.control_type == HEADLIGHT_MODE
+
     def _ambient_auto_state(self, runtime: CircuitRuntime) -> str:
         voltage = self._telemetry.latest_light_voltage()
         if voltage is None:
@@ -922,7 +934,14 @@ class GPIOControlService:
 
     def _apply_logic(self, runtime: CircuitRuntime, publish: bool = True) -> None:
         if runtime.config.switch_mode == MODE_BINARY:
-            if self._ambient_auto_enabled(runtime):
+            if self._is_headlight_mode(runtime) and runtime.mode == "AUTO" and self._ambient_auto_enabled(runtime):
+                effective = self._ambient_auto_state(runtime)
+                source = SOURCE_AUTO
+            elif self._is_headlight_mode(runtime):
+                effective = runtime.requested_state
+                source = SOURCE_REMOTE
+            elif self._ambient_auto_enabled(runtime):
+                # Preserve the established behaviour for legacy binary profiles.
                 effective = self._ambient_auto_state(runtime)
                 source = SOURCE_AUTO
             else:
@@ -965,6 +984,8 @@ class GPIOControlService:
         self._publish(f"{base}/requested_state", runtime.requested_state)
         self._publish(f"{base}/state", runtime.effective_state)
         self._publish(f"{base}/source", runtime.source)
+        if self._is_headlight_mode(runtime):
+            self._publish(f"{base}/mode", runtime.mode or STATE_OFF)
         switch_state = self._switch_state_payload(runtime)
         self._publish(self._switch_topic(trike, name), switch_state)
         runtime.last_switch_state = switch_state
@@ -1100,12 +1121,21 @@ class GPIOControlService:
                 return
             self._set_drs_mode(state)
             return
-        if payload not in (STATE_ON, STATE_OFF):
-            LOG.warning("Ignoring invalid payload on %s: %r", msg.topic, payload)
-            return
         for runtime in self._circuits.values():
             base = self._base_topic(runtime.config.trike, runtime.config.name)
             if msg.topic == f"{base}/set":
+                if self._is_headlight_mode(runtime):
+                    if payload not in (STATE_ON, STATE_OFF, "AUTO"):
+                        LOG.warning("Ignoring invalid headlight mode on %s: %r", msg.topic, payload)
+                        return
+                    runtime.mode = payload
+                    if payload in (STATE_ON, STATE_OFF):
+                        runtime.requested_state = payload
+                    self._apply_logic(runtime, publish=True)
+                    return
+                if payload not in (STATE_ON, STATE_OFF):
+                    LOG.warning("Ignoring invalid payload on %s: %r", msg.topic, payload)
+                    return
                 if self._is_horn(runtime):
                     if payload == STATE_ON:
                         runtime.requested_state = STATE_ON
@@ -1130,7 +1160,9 @@ class GPIOControlService:
                 self._handle_remote_pulse_expiry()
                 self._release_drs_if_due()
                 for runtime in self._circuits.values():
-                    if self._ambient_auto_enabled(runtime):
+                    if self._ambient_auto_enabled(runtime) and (
+                        not self._is_headlight_mode(runtime) or runtime.mode == "AUTO"
+                    ):
                         self._apply_logic(runtime, publish=True)
                     elif runtime.config.switch_mode == MODE_THREE_POSITION and runtime.config.auto_enabled:
                         if self._three_position_state(runtime) == POSITION_AUTO:
