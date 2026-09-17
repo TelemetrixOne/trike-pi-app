@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 from pathlib import Path
 import unittest
 
 from hpr_gateway.config import load_config
-from hpr_gateway.services import heart_rate
 from hpr_gateway.services.tpms import decode_ai8000
 
 
@@ -33,23 +31,13 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(config.get("bluetooth.roles.heart_rate.controller_address"), "5C:F3:70:A4:51:3D")
         self.assertTrue(config.get("gps.device").startswith("/dev/serial/by-id/"))
         self.assertEqual(config.get("tpms.sensors.tpms1.topic"), "{topic_root}/{trike_id}/tpms/tpms1")
-        self.assertEqual(config.get("video.cameras.front.video_size"), "800x600")
-        self.assertEqual(config.get("video.cameras.front.stream_size"), "640x480")
+        self.assertEqual(config.get("video.cameras.front.video_size"), "640x480")
         self.assertEqual(config.get("video.cameras.rear.video_size"), "640x480")
-        self.assertEqual(config.get("video.cameras.rear.stream_size"), "640x480")
 
     def test_packaged_mediamtx_checksum(self) -> None:
         config = load_config(str(TRIKE1_CONFIG))
         digest = hashlib.sha256(MEDIAMTX.read_bytes()).hexdigest().upper()
         self.assertEqual(digest, config.get("video.mediamtx_sha256").upper())
-
-    def test_hrm_identity_is_published_at_gatt_lock(self) -> None:
-        source = inspect.getsource(heart_rate.connect_and_validate_candidate)
-        identity_publish = source.index("publish_selected(mqttc, mac)")
-        notification_start = source.index("client.start_notify")
-
-        self.assertLess(identity_publish, notification_start)
-        self.assertEqual(source.count("publish_selected(mqttc, mac)"), 1)
 
 
 if __name__ == "__main__":

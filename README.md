@@ -4,11 +4,6 @@ This directory contains the repo-managed Pi gateway implementation.
 
 Runtime-specific values belong in `/etc/hpr/hpr.yaml`. The checked-in example is `config/hpr.example.yaml`.
 
-GPIO allocation is managed per trike in TelemetrixOne Race Configuration. See
-[central GPIO configuration and migration](../docs/centrally-managed-gpio.md)
-for the replacement trike1 wiring, review requirements, push/rollback protocol,
-and test-card deployment procedure.
-
 The Trike1 implementation incorporates the race-proven GPS, HRM, TPMS,
 power/cadence, derailleur, GPIO, health, and USB-camera behaviour. Hardware
 identities and operator values are rendered from the central race config; they
@@ -106,25 +101,6 @@ Front and rear USB cameras connect directly to the Pi. Their persistent
 come from central config. The packaged MediaMTX binary is checksum-verified at
 install time. The Pi publishes only to its local MediaMTX process; the central
 VM reads `front` and `rear` over the Pi's Tailscale address.
-
-When `video.display.enabled` is true, the configured camera publisher uses one
-USB capture and tees decoded frames directly to the active HDMI framebuffer
-while encoding the central RTSP stream in parallel. The HDMI path does
-not traverse RTSP, MediaMTX, or any network socket. The publisher reads the
-connected HDMI mode from DRM at startup and scales/crops the camera image to
-that exact pixel size without stretching it. Capture and network-stream sizes
-remain independently configurable.
-
-The local MediaMTX and camera publisher units are enabled at `multi-user.target`
-and have no Tailscale or internet startup dependency. The publisher waits for
-the configured USB device and retries indefinitely. It gives HDMI a bounded
-startup grace period, then continues publishing the network stream if no HDMI
-mode or framebuffer is available. This keeps central video independent of
-screen readiness after a reboot. When HDMI is ready during startup, the direct
-framebuffer feed is enabled as normal; attaching it after the fallback requires
-restarting that camera publisher. The installer masks the `tty1` login getty
-and runs `hpr-video-console.service` before the display camera, preventing the
-console's blinking cursor from being drawn over the framebuffer video.
 
 ## Tailscale
 

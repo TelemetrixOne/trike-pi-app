@@ -153,20 +153,12 @@ def configure(config: HprConfig) -> None:
         }
     INPUTS = {config.trike_id: inputs}
     drs = (gpio.get("pwm_outputs", {}) or {}).get("drs", {}) or {}
-    drs_control = (gpio.get("topic_controls", {}) or {}).get("drs", {}) or {}
-    boot_mode = str(drs_control.get("boot_default", "CLOSED")).upper()
-    if boot_mode == "CLOSE":
-        boot_mode = "CLOSED"
-    if boot_mode not in ("OPEN", "CLOSED", "RIDER_CONTROL"):
-        boot_mode = "CLOSED"
     DRS = {"enabled": bool(drs.get("enabled", False)), "trike": config.trike_id,
            "pin": drs.get("pin"), "frequency_hz": drs.get("frequency_hz"),
            "close_pulse_us": drs.get("close_pulse_us"), "open_pulse_us": drs.get("open_pulse_us"),
            "switch_behavior": drs.get("switch_behavior", "remote_open_close"),
            "transition_seconds": drs.get("transition_seconds", 0),
-           "pulse_release_seconds": drs.get("pulse_release_seconds"),
-           "boot_mode": boot_mode,
-           "rider_control_input": str(drs_control.get("rider_control_input", "drs_switch"))}
+           "pulse_release_seconds": drs.get("pulse_release_seconds")}
     HORN_REMOTE_PULSE_SECONDS = float(gpio.get("horn_remote_pulse_seconds", 1.0))
 
 
@@ -219,8 +211,6 @@ class DRSRuntime:
     open_pulse_us: int
     output: Optional[PWMOutputDevice] = None
     state: str = "CLOSE"
-    mode: str = "CLOSED"
-    source: str = SOURCE_REMOTE
     current_pulse_us: Optional[float] = None
     last_switch_state: Optional[str] = None
     auto_latched_on: bool = False
@@ -572,28 +562,7 @@ class GPIOControlService:
             return
         self._drs = DRSRuntime(int(DRS["pin"]), int(DRS["frequency_hz"]), int(DRS["close_pulse_us"]),
                                int(DRS["open_pulse_us"]))
-        self._set_drs_mode(DRS["boot_mode"], publish=False)
-
-    def _set_drs_mode(self, mode: str, publish: bool = True) -> None:
-        if self._drs is None:
-            return
-        with self._drs_lock:
-            self._drs.mode = mode
-            if mode == "RIDER_CONTROL":
-                self._apply_drs_rider_switch(publish=publish)
-            else:
-                self._drs.source = SOURCE_REMOTE
-                self._set_drs("OPEN" if mode == "OPEN" else "CLOSE", publish=publish)
-            if publish:
-                self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/mode", mode)
-
-    def _apply_drs_rider_switch(self, publish: bool = True) -> None:
-        if self._drs is None:
-            return
-        input_runtime = self._sense_inputs.get(self._key(DRS["trike"], DRS["rider_control_input"]))
-        switch_on = input_runtime is not None and self._sense_input_state(input_runtime) == STATE_ON
-        self._drs.source = SOURCE_LOCAL
-        self._set_drs("OPEN" if switch_on else "CLOSE", publish=publish)
+        self._set_drs("CLOSE", publish=False)
 
     def _set_drs(self, state: str, publish: bool = True) -> None:
         with self._drs_lock:
@@ -619,9 +588,8 @@ class GPIOControlService:
                 self._drs.pulse_release_at_monotonic = time.monotonic() + float(DRS["pulse_release_seconds"])
             else:
                 self._drs.pulse_release_at_monotonic = None
-        if publish:
-            self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", state)
-            self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
+            if publish:
+                self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", state)
 
     def _release_drs_if_due(self) -> None:
         with self._drs_lock:
@@ -765,8 +733,8 @@ class GPIOControlService:
                 key = self._key(si.trike, si.name)
                 runtime = SenseInputRuntime(config=si, button=button)
                 self._sense_inputs[key] = runtime
-                button.when_pressed = lambda k=key: self._on_sense_input_event(k)
-                button.when_released = lambda k=key: self._on_sense_input_event(k)
+                button.when_pressed = lambda k=key: self._publish_sense_input(self._sense_inputs[k])
+                button.when_released = lambda k=key: self._publish_sense_input(self._sense_inputs[k])
 
     @staticmethod
     def _key(trike: str, name: str) -> str:
@@ -970,8 +938,6 @@ class GPIOControlService:
             self._publish_sense_input(runtime)
         if self._drs is not None:
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", self._drs.state)
-            self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/mode", self._drs.mode)
-            self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
 
     def _discovery_topic(self, component: str, object_id: str) -> str:
         return f"{MQTT['discovery_prefix']}/{component}/{object_id}/config"
@@ -1059,12 +1025,6 @@ class GPIOControlService:
         runtime = self._circuits[circuit_key]
         self._apply_logic(runtime, publish=True)
 
-    def _on_sense_input_event(self, input_key: str) -> None:
-        runtime = self._sense_inputs[input_key]
-        self._publish_sense_input(runtime)
-        if self._drs is not None and self._drs.mode == "RIDER_CONTROL" and input_key == self._key(DRS["trike"], DRS["rider_control_input"]):
-            self._apply_drs_rider_switch(publish=True)
-
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         LOG.info("MQTT connected: rc=%s", reason_code)
         for runtime in self._circuits.values():
@@ -1083,11 +1043,11 @@ class GPIOControlService:
     def _on_message(self, client, userdata, msg) -> None:
         payload = self._sanitize_payload(msg.payload)
         if self._drs is not None and msg.topic == f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/set":
-            state = {"ON": "OPEN", "OFF": "CLOSED", "CLOSE": "CLOSED"}.get(payload, payload)
-            if state not in ("OPEN", "CLOSED", "RIDER_CONTROL"):
+            state = {"ON": "OPEN", "OFF": "CLOSE"}.get(payload, payload)
+            if state not in ("OPEN", "CLOSE"):
                 LOG.warning("Ignoring invalid DRS payload on %s: %r", msg.topic, payload)
                 return
-            self._set_drs_mode(state)
+            self._set_drs(state)
             return
         if payload not in (STATE_ON, STATE_OFF):
             LOG.warning("Ignoring invalid payload on %s: %r", msg.topic, payload)

@@ -24,7 +24,7 @@ def minimal_config() -> HprConfig:
                 "topic_root": "hpr",
                 "environment": "test",
             },
-            "pi": {"hostname": "hpr-trike1"},
+            "pi": {"hostname": "hpr-trike1-gateway"},
             "network": {
                 "mqtt": {"host": "mqtt", "port": 1883, "username": "hpr", "password": "x"},
                 "home_assistant": {"host": "ha", "port": 8123, "url": "http://ha:8123"},
