@@ -268,7 +268,10 @@ gpio:
     battery_divider_r2_ohm: 9840.0
     battery_capacity_ah: 5.0
     battery_full_voltage: 20.6
-    battery_empty_voltage: 15.5
+    battery_empty_voltage: 8.0
+    battery_empty_soc_pct: 26.0
+    battery_soc_warning_percent: 10.0
+    battery_soc_critical_percent: 5.0
     light_dark_voltage: 1.95
     light_bright_voltage: 3.13
 

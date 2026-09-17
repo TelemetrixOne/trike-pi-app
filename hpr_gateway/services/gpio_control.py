@@ -106,6 +106,7 @@ def configure(config: HprConfig) -> None:
         "battery_capacity_ah": float(adc.get("battery_capacity_ah", 5.0)),
         "battery_full_voltage": float(adc.get("battery_full_voltage", 20.6)),
         "battery_empty_voltage": float(adc.get("battery_empty_voltage", 15.5)),
+        "battery_empty_soc_pct": float(adc.get("battery_empty_soc_pct", 0.0)),
         "light_dark_voltage": float(calibration.get("dark_voltage", adc.get("light_dark_voltage", 1.95))),
         "light_bright_voltage": float(calibration.get("light_voltage", adc.get("light_bright_voltage", 3.13))),
         "adc_reference_voltage": float(adc.get("adc_reference_voltage", 3.3)),
@@ -315,6 +316,16 @@ class TelemetryMonitor:
         soc = 100.0 * (v_batt - batt_empty) / (batt_full - batt_empty)
         return self._clamp(soc, 0.0, 100.0)
 
+    def calibrated_soc(self, raw_soc: float, battery_voltage: float) -> float:
+        """Map an observed flat-battery SOC reading to zero."""
+        empty_soc = float(ADC["battery_empty_soc_pct"])
+        empty_voltage = float(ADC["battery_empty_voltage"])
+        if not 0.0 <= empty_soc < 100.0:
+            raise ValueError("battery_empty_soc_pct must be from 0 to less than 100")
+        if battery_voltage <= empty_voltage:
+            return 0.0
+        return self._clamp(100.0 * (raw_soc - empty_soc) / (100.0 - empty_soc), 0.0, 100.0)
+
     def light_percent_from_voltage(self, v_light: float) -> float:
         if "light_dark_voltage" in ADC and "light_bright_voltage" in ADC:
             dark_v = float(ADC["light_dark_voltage"])
@@ -515,8 +526,8 @@ class TelemetryMonitor:
             self._remaining_ah = self._clamp(capacity_ah - self._ah_used, 0.0, capacity_ah)
             soc_coulomb = 100.0 * self._remaining_ah / capacity_ah
             soc_voltage = self.soc_from_voltage(avg_battery_v)
-            soc_blended = (float(ADC["soc_coulomb_weight"]) * soc_coulomb) + (float(ADC["soc_voltage_weight"]) * soc_voltage)
-            soc_blended = self._clamp(soc_blended, 0.0, 100.0)
+            raw_soc = (float(ADC["soc_coulomb_weight"]) * soc_coulomb) + (float(ADC["soc_voltage_weight"]) * soc_voltage)
+            soc_blended = self.calibrated_soc(raw_soc, avg_battery_v)
 
             power_w = avg_battery_v * avg_current_a
             values = {
