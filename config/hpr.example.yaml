@@ -1,0 +1,359 @@
+hpr:
+  trike_id: "trike1"
+  display_name: "Ashton"
+  topic_root: "hpr"
+  environment: "production"
+
+pi:
+  hostname: "hpr-{trike_id}"
+  set_system_hostname: true
+  local_ip: null
+  tailscale_ip: null
+
+credentials:
+  default_username: "hpr"
+  default_password: "hPr01"
+
+network:
+  tailscale_required: true
+
+  mqtt:
+    host: "CHANGE_ME"
+    port: 1883
+    username: "hpr"
+    password: "hPr01"
+
+  home_assistant:
+    host: "CHANGE_ME"
+    port: 8123
+    url: "http://CHANGE_ME:8123"
+    username: "hpr"
+    password: "hPr01"
+
+  mediamtx:
+    enabled: false
+    public_host: "CHANGE_ME"
+    tailscale_host: "CHANGE_ME"
+    rtmp_port: 1935
+    rtsp_port: 8554
+    hls_port: 8888
+    webrtc_port: 8889
+
+  video:
+    central_router: "mediamtx"
+    rtmp_publish_base: "rtmp://CHANGE_ME:1935"
+    rtsp_read_base: "rtsp://CHANGE_ME:8554"
+    hls_read_base: "http://CHANGE_ME:8888"
+    webrtc_read_base: "http://CHANGE_ME:8889"
+
+logging:
+  level: "INFO"
+  log_to_stdout: true
+
+system:
+  install_root: "/opt/hpr/gateway"
+  config_path: "/etc/hpr/hpr.yaml"
+  log_dir: "/var/log/hpr"
+  service_user: "admin"
+  service_group: "admin"
+
+tailscale:
+  enabled: true
+  install_if_missing: true
+  hostname: "hpr-{trike_id}"
+  auth_key_env: "HPR_TAILSCALE_AUTHKEY"
+  auth_key_file: null
+  accept_routes: true
+  accept_dns: true
+  advertise_tags: "tag:hpr-gateway"
+
+bluetooth:
+  # Services resolve these stable controller addresses to the current hciN
+  # names after every boot or USB reconnect.
+  roles:
+    telemetry:
+      controller_address: "CHANGE_ME"
+      fallback_adapter: "hci0"
+    heart_rate:
+      controller_address: "CHANGE_ME"
+      fallback_adapter: "hci1"
+
+services:
+  heartbeat:
+    enabled: true
+    interval_seconds: 5
+    topic: "{topic_root}/{trike_id}/pi/heartbeat"
+    legacy_topics:
+      - "hpv/01/gw/last_seen"
+
+  tpms:
+    enabled: true
+    publish_retain: false
+    publish_qos: 1
+    stale_seconds: 300
+
+  gps:
+    enabled: true
+
+  gpio_control:
+    enabled: false
+  gpio_config_sync:
+    enabled: true
+    status_interval_seconds: 10
+
+  pi_power_health:
+    enabled: true
+    interval_seconds: 10
+    power_topic: "{topic_root}/{trike_id}/pi/power_health"
+    raw_topic: "{topic_root}/{trike_id}/pi/throttled_raw"
+    service_topic: "{topic_root}/{trike_id}/health/services/pi_power"
+
+  services_health:
+    enabled: true
+    interval_seconds: 5
+    units:
+      tpms_health: "hpr-tpms.service"
+      gps_health: "hpr-gps.service"
+      heart_rate_health: "hpr-heart-rate.service"
+      power_cadence_health: "hpr-power-cadence.service"
+      gpio_health: "hpr-gpio-control.service"
+      derailleur_health: "hpr-derailleur.service"
+      video_health: "hpr-video-mediamtx.service"
+
+  heart_rate:
+    enabled: true
+
+  power_cadence:
+    enabled: true
+
+  derailleur:
+    enabled: true
+
+  video:
+    enabled: true
+
+  power_watch:
+    enabled: true
+    interval_seconds: 60
+    log_path: "/var/log/hpr/power-watch.log"
+
+tpms:
+  bluetooth_adapter: "hci0"
+  manufacturer_id: "0x0100"
+  sensors:
+    tpms1:
+      enabled: true
+      mac: "CHANGE_ME"
+      position: "front_left"
+      topic: "{topic_root}/{trike_id}/tpms/tpms1"
+      decode_profile: "tpms1"
+    tpms2:
+      enabled: true
+      mac: "CHANGE_ME"
+      position: "front_right"
+      topic: "{topic_root}/{trike_id}/tpms/tpms2"
+      decode_profile: "tpms1"
+    tpms3:
+      enabled: true
+      mac: "CHANGE_ME"
+      position: "rear"
+      topic: "{topic_root}/{trike_id}/tpms/tpms3"
+      decode_profile: "tpms1"
+
+gps:
+  enabled: true
+  topic: "{topic_root}/{trike_id}/nav"
+  status_topic: "{topic_root}/{trike_id}/nav/status"
+  gpsd_enabled: true
+  device: "/dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00"
+  usb_vendor_id: "1546"
+  usb_product_id: "01a9"
+  hotplug_recovery_enabled: true
+  stale_timeout_seconds: 5.0
+  wait_timeout_seconds: 0.5
+  reconnect_initial_seconds: 1.0
+  reconnect_max_seconds: 15.0
+
+gpio:
+  enabled: true
+  profile_version: "2026-09-16"
+  review_status: "CONFIRMED"
+  numbering: "BCM"
+  i2c:
+    enabled: true
+    bus: 1
+    sda_pin: 2
+    scl_pin: 3
+  horn_remote_pulse_seconds: 1.0
+  service:
+    discovery_enabled: true
+    poll_interval_seconds: 0.2
+  circuits:
+    headlight:
+      enabled: true
+      output_pin: 5
+      output_active_high: true
+      boot_default: "OFF"
+      command_topic: "{topic_root}/{trike_id}/control/headlight/set"
+      state_topic: "{topic_root}/{trike_id}/control/headlight/state"
+      source_topic: "{topic_root}/{trike_id}/control/headlight/source"
+
+    demister:
+      enabled: true
+      output_pin: 25
+      output_active_high: false
+      boot_default: "OFF"
+      command_topic: "{topic_root}/{trike_id}/control/demister/set"
+      state_topic: "{topic_root}/{trike_id}/control/demister/state"
+      source_topic: "{topic_root}/{trike_id}/control/demister/source"
+
+    aux_lights:
+      enabled: true
+      output_pin: 24
+      output_active_high: false
+      boot_default: "OFF"
+      command_topic: "{topic_root}/{trike_id}/control/aux_lights/set"
+      state_topic: "{topic_root}/{trike_id}/control/aux_lights/state"
+      source_topic: "{topic_root}/{trike_id}/control/aux_lights/source"
+
+    horn:
+      enabled: true
+      output_pin: 17
+      output_active_high: false
+      boot_default: "OFF"
+      icon: "mdi:bullhorn"
+
+  sense_inputs:
+    headlamp:
+      enabled: true
+      pin: 27
+      pull_up: null
+      active_high: true
+      state_topic: "{topic_root}/{trike_id}/input/headlamp/state"
+    aux_lights:
+      enabled: true
+      pin: 22
+      pull_up: null
+      active_high: true
+    demister:
+      enabled: true
+      pin: 23
+      pull_up: null
+      active_high: true
+    drs_switch:
+      enabled: true
+      pin: 6
+      pull_up: true
+      active_high: false
+      state_semantics: "electrical"
+
+  pwm_outputs:
+    drs:
+      enabled: false
+      reserved: true
+      pin: 12
+      review_status: "UNKNOWN_REVIEW_REQUIRED"
+      frequency_hz: null
+      open_pulse_us: null
+      close_pulse_us: null
+      switch_behavior: null
+
+  telemetry:
+    enabled: true
+
+  adc:
+    i2c_address: "0x48"
+    shunt_resistance_ohm: 0.0025
+    battery_divider_r1_ohm: 68000.0
+    battery_divider_r2_ohm: 9840.0
+    battery_capacity_ah: 5.0
+    battery_full_voltage: 20.6
+    battery_empty_voltage: 15.5
+    light_dark_voltage: 1.95
+    light_bright_voltage: 3.13
+
+heart_rate:
+  active_adapter: "hci1"
+  scan_adapter: "hci1"
+  publish_min_interval_seconds: 0.5
+  no_bpm_payload: "-"
+  selection_fresh_seconds: 6.0
+  scan_cycle_seconds: 6.0
+  ble_settle_seconds: 0.75
+  heartbeat_lost_seconds: 20.0
+  candidate_bpm_prove_seconds: 30.0
+  suppress_no_bpm_seconds: 20.0
+  find_timeout_seconds: 10.0
+  connect_timeout_seconds: 20.0
+  monitors:
+    hrm1:
+      enabled: false
+      number: 1
+      mac: "CHANGE_ME"
+      device_name: "CHANGE_ME"
+      rider_name: "HRM1"
+
+power_cadence:
+  bluetooth_adapter: "hci0"
+  devices:
+    assioma_left:
+      enabled: false
+      mac: "CHANGE_ME"
+      topic_base: "{topic_root}/{trike_id}/pedals/assioma_left"
+      battery_poll_seconds: 300
+      scan_timeout_seconds: 10
+      connect_timeout_seconds: 15
+      gatt_timeout_seconds: 8
+      notification_stale_timeout_seconds: 15
+      reconnect_initial_seconds: 1
+      reconnect_max_seconds: 15
+
+derailleur:
+  enabled: true
+  device_name: "EDS OX"
+  mac: "CHANGE_ME"
+  bluetooth_adapter: "hci0"
+  topic_base: "{topic_root}/{trike_id}/derailleur"
+  scan_timeout_seconds: 30
+  connect_timeout_seconds: 20
+  notification_stale_timeout_seconds: 30
+  reconnect_initial_seconds: 2
+  reconnect_max_seconds: 15
+
+video:
+  enabled: true
+  mediamtx_version: "v1.19.1"
+  mediamtx_arch: "linux_arm64"
+  mediamtx_sha256: "CHANGE_ME"
+  rtsp_port: 8554
+  display:
+    enabled: false
+    camera: "front"
+    device: "/dev/fb0"
+    pixel_format: "rgb565le"
+  cameras:
+    front:
+      enabled: true
+      device: "/dev/v4l/by-id/CHANGE_ME-front-video-index0"
+      path: "front"
+      input_format: "mjpeg"
+      video_size: "640x480"
+      stream_size: "640x480"
+      input_framerate: 30
+      output_framerate: 25
+      bitrate: "700k"
+      gop: 25
+    rear:
+      enabled: true
+      device: "/dev/v4l/by-id/CHANGE_ME-rear-video-index0"
+      path: "rear"
+      input_format: "mjpeg"
+      video_size: "640x480"
+      stream_size: "640x480"
+      input_framerate: 30
+      output_framerate: 25
+      bitrate: "700k"
+      gop: 25
+
+health:
+  base_topic: "{topic_root}/{trike_id}/pi"
