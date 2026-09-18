@@ -91,6 +91,8 @@ services:
     publish_retain: false
     publish_qos: 1
     stale_seconds: 300
+  tpms_config_sync:
+    enabled: true
 
   gps:
     enabled: true
