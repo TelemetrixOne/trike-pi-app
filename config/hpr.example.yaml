@@ -127,6 +127,8 @@ services:
 
   power_cadence:
     enabled: true
+  power_cadence_config_sync:
+    enabled: true
 
   derailleur:
     enabled: true

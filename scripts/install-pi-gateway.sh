@@ -364,7 +364,7 @@ install_unit() {
   if [ "${module}" = "gpio_control" ]; then
     unit_type="notify"
   fi
-  if [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ]; then
+  if [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ] || [ "${module}" = "power_cadence_config_sync" ]; then
     unit_user="root"
     unit_group="root"
   fi
@@ -585,6 +585,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   install_unit hpr-tpms-config-sync.service tpms_config_sync
   install_unit hpr-heart-rate.service heart_rate
   install_unit hpr-power-cadence.service power_cadence
+  install_unit hpr-power-cadence-config-sync.service power_cadence_config_sync
   install_unit hpr-gpio-control.service gpio_control
   install_unit hpr-gpio-config-sync.service gpio_config_sync
   install_unit hpr-derailleur.service derailleur
@@ -617,6 +618,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   enable_service_if_configured tpms_config_sync hpr-tpms-config-sync.service
   enable_service_if_configured heart_rate hpr-heart-rate.service
   enable_service_if_configured power_cadence hpr-power-cadence.service
+  enable_service_if_configured power_cadence_config_sync hpr-power-cadence-config-sync.service
   enable_service_if_configured gpio_control hpr-gpio-control.service
   enable_service_if_configured gpio_config_sync hpr-gpio-config-sync.service
   enable_service_if_configured derailleur hpr-derailleur.service
