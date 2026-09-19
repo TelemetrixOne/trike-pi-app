@@ -384,6 +384,10 @@ install_unit() {
       wants="${wants} bluetooth.service"
       ;;
   esac
+  local exec_start_pre=""
+  if [ "${module}" = "heart_rate" ]; then
+    exec_start_pre="ExecStartPre=+${VENV_DIR}/bin/python -m hpr_gateway.bluetooth_power --config ${CONFIG_PATH} --role heart_rate"
+  fi
   cat > "/etc/systemd/system/${unit_name}" <<EOF
 [Unit]
 Description=HPR Pi Gateway ${module}
@@ -398,6 +402,7 @@ TimeoutStartSec=30
 WorkingDirectory=${INSTALL_ROOT}
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=${INSTALL_ROOT}
+${exec_start_pre}
 ExecStart=${VENV_DIR}/bin/python -m hpr_gateway.services.${module} --config ${CONFIG_PATH}
 Restart=always
 RestartSec=5
