@@ -228,6 +228,11 @@ class HprConfig:
                         )
                 if not camera.get("path"):
                     raise ConfigError(f"video.cameras.{name}.path is required")
+                rotation = str(camera.get("rotation", "none"))
+                if rotation not in {"none", "clockwise_90", "180", "anticlockwise_90"}:
+                    raise ConfigError(
+                        f"video.cameras.{name}.rotation must be none, clockwise_90, 180, or anticlockwise_90"
+                    )
                 path = str(camera["path"])
                 if path in paths:
                     raise ConfigError(f"video camera path is duplicated: {path}")

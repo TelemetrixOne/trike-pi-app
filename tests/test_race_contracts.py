@@ -7,6 +7,7 @@ import unittest
 
 import yaml
 
+from hpr_gateway.config import ConfigError, HprConfig
 from hpr_gateway.services import heart_rate
 from hpr_gateway.services.tpms import decode_ai8000
 
@@ -36,12 +37,25 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(config["heart_rate"]["scan_adapter"], "hci1")
         self.assertEqual(config["tpms"]["sensors"]["tpms1"]["topic"], "{topic_root}/{trike_id}/tpms/tpms1")
         self.assertEqual(config["video"]["cameras"]["front"]["video_size"], "640x480")
+        self.assertEqual(config["video"]["cameras"]["front"]["rotation"], "none")
         self.assertEqual(config["video"]["cameras"]["rear"]["video_size"], "640x480")
 
     def test_packaged_mediamtx_checksum(self) -> None:
         config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))
         digest = hashlib.sha256(MEDIAMTX.read_bytes()).hexdigest().upper()
         self.assertEqual(digest, config["video"]["mediamtx_sha256"].upper())
+
+    def test_invalid_camera_rotation_is_rejected(self) -> None:
+        text = TRIKE1_CONFIG.read_text(encoding="utf-8").replace("CHANGE_ME", "127.0.0.1")
+        config = yaml.safe_load(text)
+        config["bluetooth"]["roles"]["telemetry"]["controller_address"] = "AA:BB:CC:DD:EE:01"
+        config["bluetooth"]["roles"]["heart_rate"]["controller_address"] = "AA:BB:CC:DD:EE:02"
+        config["services"]["heart_rate"]["enabled"] = False
+        config["services"]["derailleur"]["enabled"] = False
+        config["services"]["gpio_control"]["enabled"] = False
+        config["video"]["cameras"]["front"]["rotation"] = "sideways"
+        with self.assertRaisesRegex(ConfigError, "rotation"):
+            HprConfig(config, str(TRIKE1_CONFIG))
 
     def test_hrm_identity_is_published_at_gatt_lock(self) -> None:
         source = inspect.getsource(heart_rate.connect_and_validate_candidate)

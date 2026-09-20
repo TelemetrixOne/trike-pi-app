@@ -39,7 +39,7 @@ class TrikeConfigSyncTests(unittest.TestCase):
             "heart_rate": {"enabled": False, "monitors": {}},
             "derailleur": {"enabled": False, "name": "", "mac": ""},
             "video": {"enabled": True, "cameras": {
-                "front": {"enabled": True, "device": "/dev/v4l/by-path/new-front", "path": "front"},
+                "front": {"enabled": True, "device": "/dev/v4l/by-path/new-front", "path": "front", "rotation": "anticlockwise_90"},
                 "rear": {"enabled": False, "device": "/dev/v4l/by-path/new-rear", "path": "rear"},
             }},
             "tpms": {"tpms_enabled": False, "sensors": {}},
@@ -56,6 +56,7 @@ class TrikeConfigSyncTests(unittest.TestCase):
             applied = yaml.safe_load(path.read_text(encoding="utf-8"))
 
         self.assertEqual(applied["video"]["cameras"]["front"]["device"], "/dev/v4l/by-path/new-front")
+        self.assertEqual(applied["video"]["cameras"]["front"]["rotation"], "anticlockwise_90")
         self.assertEqual(applied["video"]["cameras"]["front"]["bitrate"], original_bitrate)
         self.assertEqual(applied["hpr"]["display_name"], "Project 646")
         self.assertEqual(applied["configuration"]["trike_hash"], envelope["hash"])

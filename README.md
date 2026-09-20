@@ -97,10 +97,12 @@ GATT connection, avoiding scan/connection contention on the dedicated adapter.
 ## USB cameras
 
 Front and rear USB cameras connect directly to the Pi. Their persistent
-`/dev/v4l/by-id/...` paths, 640x480 capture settings, and local RTSP path names
-come from central config. The packaged MediaMTX binary is checksum-verified at
-install time. The Pi publishes only to its local MediaMTX process; the central
-VM reads `front` and `rear` over the Pi's Tailscale address.
+`/dev/v4l/by-id/...` paths, 640x480 capture settings, rotation, and local RTSP
+path names come from central config. Rotation accepts `none`, `clockwise_90`,
+`180`, or `anticlockwise_90` per camera and applies to both RTSP and direct HDMI
+output. The packaged MediaMTX binary is checksum-verified at install time. The
+Pi publishes only to its local MediaMTX process; the central VM reads `front`
+and `rear` over the Pi's Tailscale address.
 
 ## Tailscale
 

@@ -346,6 +346,7 @@ video:
       enabled: true
       device: "/dev/v4l/by-id/CHANGE_ME-front-video-index0"
       path: "front"
+      rotation: "none"
       input_format: "mjpeg"
       video_size: "640x480"
       stream_size: "640x480"
@@ -357,6 +358,7 @@ video:
       enabled: true
       device: "/dev/v4l/by-id/CHANGE_ME-rear-video-index0"
       path: "rear"
+      rotation: "none"
       input_format: "mjpeg"
       video_size: "640x480"
       stream_size: "640x480"

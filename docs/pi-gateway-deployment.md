@@ -153,6 +153,12 @@ the HDMI feed permanently stopped. Because this is a dedicated display, the
 installer masks `getty@tty1.service` and prepares the console with its cursor,
 blanking, and power-saving disabled before starting the display camera.
 
+Each centrally managed camera can set `rotation` to `none`, `clockwise_90`,
+`180`, or `anticlockwise_90`. The publisher applies the same rotation to the
+RTSP stream and direct HDMI branch. If HDMI is disconnected during startup, the
+publisher waits for `video.display.startup_wait_seconds` (10 seconds by default)
+and then keeps the network stream running.
+
 ## Tailscale
 
 The simplest supported self-registration flow is:

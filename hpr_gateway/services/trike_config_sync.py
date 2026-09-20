@@ -66,7 +66,7 @@ class ProfileApplier:
 
     @staticmethod
     def _merge_camera(target: dict, source: dict) -> None:
-        for key in ("enabled", "device", "path"):
+        for key in ("enabled", "device", "path", "rotation"):
             if key in source:
                 target[key] = source[key]
 
