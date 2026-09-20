@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import subprocess
-from typing import Any
+from pathlib import Path
+from typing import IO, Any
 
 from .config import ConfigError, HprConfig
 
 
 _ADAPTER_RE = re.compile(r"^(hci\d+):")
 _ADDRESS_RE = re.compile(r"BD Address:\s*([0-9A-F:]{17})", re.IGNORECASE)
+
+
+async def acquire_connection_slot(adapter: str) -> IO[bytes]:
+    """Serialise BLE discovery/GATT setup on one controller across services."""
+    import fcntl
+
+    handle = Path(f"/tmp/hpr-ble-connect-{adapter}.lock").open("a+b")
+    await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+
+def release_connection_slot(handle: IO[bytes] | None) -> None:
+    if handle is None:
+        return
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
 
 
 def controller_map() -> dict[str, str]:

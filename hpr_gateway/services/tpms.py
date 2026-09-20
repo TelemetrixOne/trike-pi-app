@@ -11,7 +11,7 @@ from typing import Any
 
 from bleak import BleakScanner
 
-from hpr_gateway.bluetooth import resolve_bluetooth_role
+from hpr_gateway.bluetooth import acquire_connection_slot, release_connection_slot, resolve_bluetooth_role
 from hpr_gateway.config import config_arg_parser, enabled_items, load_config
 from hpr_gateway.mqtt import connect_client, encode_payload
 
@@ -63,6 +63,8 @@ async def run(config_path: str) -> int:
     stale_seconds = float(service.get("stale_seconds", 300))
     min_delta = float(service.get("publish_min_delta_psi", 0.2))
     max_interval = float(service.get("publish_max_interval_seconds", 10))
+    scan_window = float(service.get("scan_window_seconds", 5))
+    scan_pause = float(service.get("scan_pause_seconds", 0.5))
     manufacturer_id = int(str(config.get("tpms.manufacturer_id", "0x0100")), 0)
 
     def publish(topic: str, payload: Any) -> None:
@@ -109,19 +111,35 @@ async def run(config_path: str) -> int:
     adapter = resolve_bluetooth_role(
         config, "telemetry", legacy_adapter_path="tpms.bluetooth_adapter"
     )
-    scanner = BleakScanner(callback, adapter=adapter)
-    await scanner.start()
     try:
         while not STOP.is_set():
-            now_monotonic = time.monotonic()
-            for sensor in sensors.values():
-                if sensor["online"] and now_monotonic - sensor["last_seen"] > stale_seconds:
-                    topic = config.resolve_topic(sensor.get("topic"), "tpms", sensor["name"])
-                    client.publish(f"{topic.rstrip('/')}/availability", payload="offline", qos=qos, retain=retain)
-                    sensor["online"] = False
-            await asyncio.sleep(1)
+            connection_slot = await acquire_connection_slot(adapter)
+            scanner = BleakScanner(callback, adapter=adapter)
+            try:
+                await scanner.start()
+                deadline = time.monotonic() + scan_window
+                while not STOP.is_set() and time.monotonic() < deadline:
+                    now_monotonic = time.monotonic()
+                    for sensor in sensors.values():
+                        if sensor["online"] and now_monotonic - sensor["last_seen"] > stale_seconds:
+                            topic = config.resolve_topic(sensor.get("topic"), "tpms", sensor["name"])
+                            client.publish(
+                                f"{topic.rstrip('/')}/availability",
+                                payload="offline",
+                                qos=qos,
+                                retain=retain,
+                            )
+                            sensor["online"] = False
+                    await asyncio.sleep(min(1.0, max(0.1, deadline - time.monotonic())))
+            finally:
+                try:
+                    await scanner.stop()
+                except Exception as exc:
+                    LOG.warning("TPMS scan stop failed: %s", exc)
+                release_connection_slot(connection_slot)
+            if not STOP.is_set():
+                await asyncio.sleep(scan_pause)
     finally:
-        await scanner.stop()
         for sensor in sensors.values():
             topic = config.resolve_topic(sensor.get("topic"), "tpms", sensor["name"])
             client.publish(f"{topic.rstrip('/')}/availability", payload="offline", qos=qos, retain=retain)

@@ -196,12 +196,13 @@ class HprConfig:
             for key in (
                 "scan_timeout_seconds",
                 "connect_timeout_seconds",
-                "notification_stale_timeout_seconds",
                 "reconnect_initial_seconds",
                 "reconnect_max_seconds",
             ):
                 if float(self.get(f"derailleur.{key}", 0)) <= 0:
                     raise ConfigError(f"derailleur.{key} must be positive")
+            if float(self.get("derailleur.notification_stale_timeout_seconds", 0)) < 0:
+                raise ConfigError("derailleur.notification_stale_timeout_seconds must be zero or positive")
             if float(self.get("derailleur.reconnect_max_seconds", 15)) < float(
                 self.get("derailleur.reconnect_initial_seconds", 1)
             ):

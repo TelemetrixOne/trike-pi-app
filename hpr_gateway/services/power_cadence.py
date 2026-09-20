@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import struct
 import time
 from dataclasses import dataclass
@@ -10,12 +11,13 @@ from typing import Optional
 
 from bleak import BleakClient, BleakScanner
 
-from hpr_gateway.bluetooth import resolve_bluetooth_role
+from hpr_gateway.bluetooth import acquire_connection_slot, release_connection_slot, resolve_bluetooth_role
 from hpr_gateway.config import config_arg_parser, enabled_items, load_config
 from hpr_gateway.mqtt import connect_client
 
 UUID_CPM_CHAR = "00002a63-0000-1000-8000-00805f9b34fb"
 UUID_BATTERY_CHAR = "00002a19-0000-1000-8000-00805f9b34fb"
+LOG = logging.getLogger("hpr_power_cadence")
 
 
 class PedalNotFound(RuntimeError):
@@ -77,7 +79,7 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
     topic_base = config.resolve_topic(device_cfg.get("topic_base"), "pedals", name).rstrip("/")
     battery_poll = float(device_cfg.get("battery_poll_seconds", 300))
     scan_timeout = float(device_cfg.get("scan_timeout_seconds", 10))
-    connect_timeout = float(device_cfg.get("connect_timeout_seconds", 15))
+    connect_timeout = float(device_cfg.get("connect_timeout_seconds", 30))
     gatt_timeout = float(device_cfg.get("gatt_timeout_seconds", 8))
     stale_timeout = float(device_cfg.get("notification_stale_timeout_seconds", 15))
     reconnect_initial = float(device_cfg.get("reconnect_initial_seconds", 1))
@@ -96,7 +98,10 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
         client = None
         notification_started = False
         real_data_seen = False
+        stage = "scan"
+        connection_slot = None
         try:
+            connection_slot = await acquire_connection_slot(adapter)
             dev = await bounded(
                 BleakScanner.find_device_by_address(mac, timeout=scan_timeout, adapter=adapter),
                 scan_timeout + 1,
@@ -106,6 +111,7 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
                 publish(f"{topic_base}/status", {"ts": now_iso(), "state": "not_found", "mac": mac})
                 raise PedalNotFound(f"{mac} was not found")
             publish(f"{topic_base}/status", {"ts": now_iso(), "state": "connecting", "mac": mac})
+            stage = "connect"
             client = BleakClient(dev, timeout=connect_timeout)
             await bounded(client.connect(), connect_timeout, "BLE connect")
             last_notification = time.monotonic()
@@ -139,12 +145,16 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
                     crank.last_crank_revs = parsed["crank_revs"]
                     crank.last_crank_event_time = parsed["crank_event_time"]
 
+            stage = "notification subscription"
             await bounded(
                 client.start_notify(UUID_CPM_CHAR, on_notify),
                 gatt_timeout,
                 "GATT notification subscription",
             )
             notification_started = True
+            release_connection_slot(connection_slot)
+            connection_slot = None
+            stage = "notification stream"
             publish(f"{topic_base}/status", {"ts": now_iso(), "state": "connected"})
 
             while client.is_connected:
@@ -174,8 +184,10 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
         except PedalNotFound:
             pass
         except Exception as exc:
+            LOG.warning("pedal %s failed during %s: %s", mac, stage, exc)
             publish(f"{topic_base}/status", {"ts": now_iso(), "state": "disconnected", "err": str(exc)})
         finally:
+            release_connection_slot(connection_slot)
             if client is not None:
                 if notification_started and client.is_connected:
                     try:
@@ -186,11 +198,12 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
                         )
                     except Exception:
                         pass
-                if client.is_connected:
-                    try:
-                        await bounded(client.disconnect(), gatt_timeout, "BLE disconnect")
-                    except Exception:
-                        pass
+                # A cancelled Bleak connect can leave BlueZ connected while
+                # client.is_connected is false. Always request cleanup.
+                try:
+                    await bounded(client.disconnect(), gatt_timeout, "BLE disconnect")
+                except Exception as cleanup_exc:
+                    LOG.warning("pedal %s cleanup disconnect failed: %s", mac, cleanup_exc)
 
         await asyncio.sleep(reconnect_delay)
         if not real_data_seen:
@@ -199,6 +212,7 @@ async def run_device(config, mqttc, name: str, device_cfg: dict) -> None:
 
 async def run(config_path: str) -> int:
     config = load_config(config_path)
+    logging.basicConfig(level=getattr(logging, config.get("logging.level", "INFO").upper()))
     mqttc = connect_client(config, f"hpr-{config.trike_id}-power-cadence")
     devices = list(enabled_items(config.get("power_cadence.devices", {})))
     await asyncio.gather(*(run_device(config, mqttc, name, cfg) for name, cfg in devices))

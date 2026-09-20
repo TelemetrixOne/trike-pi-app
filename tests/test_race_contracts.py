@@ -29,6 +29,8 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(config.trike_id, "trike1")
         self.assertEqual(config.get("bluetooth.roles.telemetry.controller_address"), "88:A2:9E:83:B0:2F")
         self.assertEqual(config.get("bluetooth.roles.heart_rate.controller_address"), "5C:F3:70:A4:51:3D")
+        self.assertEqual(config.get("heart_rate.active_adapter"), "hci0")
+        self.assertEqual(config.get("heart_rate.scan_adapter"), "hci1")
         self.assertTrue(config.get("gps.device").startswith("/dev/serial/by-id/"))
         self.assertEqual(config.get("tpms.sensors.tpms1.topic"), "{topic_root}/{trike_id}/tpms/tpms1")
         self.assertEqual(config.get("video.cameras.front.video_size"), "640x480")
@@ -38,6 +40,23 @@ class RaceContractTests(unittest.TestCase):
         config = load_config(str(TRIKE1_CONFIG))
         digest = hashlib.sha256(MEDIAMTX.read_bytes()).hexdigest().upper()
         self.assertEqual(digest, config.get("video.mediamtx_sha256").upper())
+
+    def test_hrm_identity_is_published_at_gatt_lock(self) -> None:
+        source = inspect.getsource(heart_rate.connect_and_validate_candidate)
+        identity_publish = source.index("publish_selected(mqttc, mac)")
+        notification_start = source.index("client.start_notify")
+
+        self.assertLess(identity_publish, notification_start)
+        self.assertEqual(source.count("publish_selected(mqttc, mac)"), 1)
+
+    def test_hrm_scans_and_connects_on_separate_controller_roles(self) -> None:
+        source = inspect.getsource(heart_rate.configure)
+        connect_source = inspect.getsource(heart_rate.connect_and_validate_candidate)
+
+        self.assertIn('config, "telemetry", legacy_adapter_path="heart_rate.active_adapter"', source)
+        self.assertIn('config, "heart_rate", legacy_adapter_path="heart_rate.scan_adapter"', source)
+        self.assertIn("BleakScanner.find_device_by_address", connect_source)
+        self.assertIn("adapter=ACTIVE_ADAPTER", connect_source)
 
 
 if __name__ == "__main__":

@@ -309,7 +309,7 @@ power_cadence:
       topic_base: "{topic_root}/{trike_id}/pedals/assioma_left"
       battery_poll_seconds: 300
       scan_timeout_seconds: 10
-      connect_timeout_seconds: 15
+      connect_timeout_seconds: 30
       gatt_timeout_seconds: 8
       notification_stale_timeout_seconds: 15
       reconnect_initial_seconds: 1
@@ -323,7 +323,8 @@ derailleur:
   topic_base: "{topic_root}/{trike_id}/derailleur"
   scan_timeout_seconds: 30
   connect_timeout_seconds: 20
-  notification_stale_timeout_seconds: 30
+  # Zero disables notification-idle disconnects for event-driven derailleurs.
+  notification_stale_timeout_seconds: 0
   reconnect_initial_seconds: 2
   reconnect_max_seconds: 15
 

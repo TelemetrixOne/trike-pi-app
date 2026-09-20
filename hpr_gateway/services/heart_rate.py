@@ -40,7 +40,7 @@ from typing import Dict, Optional, List, Tuple
 from bleak import BleakScanner, BleakClient
 import paho.mqtt.client as mqtt
 
-from hpr_gateway.bluetooth import resolve_bluetooth_role
+from hpr_gateway.bluetooth import acquire_connection_slot, release_connection_slot, resolve_bluetooth_role
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
 
 
@@ -144,10 +144,14 @@ def configure(config: HprConfig) -> None:
     MQTT_HOST, MQTT_PORT = config.mqtt.host, config.mqtt.port
     MQTT_USERNAME, MQTT_PASSWORD = config.mqtt.username, config.mqtt.password
     TOPIC_ROOT = config.topic_root
+    # The USB controller continuously scans/ranks known HRMs. The onboard
+    # telemetry controller owns the selected HRM GATT connection.
     ACTIVE_ADAPTER = resolve_bluetooth_role(
-        config, "heart_rate", legacy_adapter_path="heart_rate.active_adapter", default_adapter="hci1"
+        config, "telemetry", legacy_adapter_path="heart_rate.active_adapter", default_adapter="hci0"
     )
-    SCAN_ADAPTER = ACTIVE_ADAPTER
+    SCAN_ADAPTER = resolve_bluetooth_role(
+        config, "heart_rate", legacy_adapter_path="heart_rate.scan_adapter", default_adapter="hci1"
+    )
 
     base = f"{TOPIC_ROOT}/{TRIKE}/hr"
     TOPIC_BPM, TOPIC_JSON, TOPIC_STATUS = f"{base}/bpm", f"{base}/json", f"{base}/status"
@@ -579,11 +583,22 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
     mac = mac.upper()
     client: Optional[BleakClient] = None
     notify_started = False
+    connection_slot = None
 
     try:
+        connection_slot = await acquire_connection_slot(ACTIVE_ADAPTER)
         mqttc.publish(TOPIC_STATUS, payload=f"finding:{mac}", qos=0, retain=False)
-        candidate = seen.get(mac)
-        dev = candidate.device if candidate is not None else None
+        # Candidate ranking comes from the USB scan controller, but a BLEDevice
+        # is adapter-specific. Rediscover the selected MAC on the onboard
+        # controller before creating the GATT client.
+        dev = await asyncio.wait_for(
+            BleakScanner.find_device_by_address(
+                mac,
+                timeout=FIND_TIMEOUT_SEC,
+                adapter=ACTIVE_ADAPTER,
+            ),
+            timeout=FIND_TIMEOUT_SEC + 1,
+        )
 
         if dev is None:
             mqttc.publish(TOPIC_STATUS, payload=f"not_found_on_{ACTIVE_ADAPTER}:{mac}", qos=0, retain=False)
@@ -645,6 +660,8 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
             timeout=CONNECT_TIMEOUT_SEC,
         )
         notify_started = True
+        release_connection_slot(connection_slot)
+        connection_slot = None
 
         # Candidate proof window.
         mqttc.publish(
@@ -713,17 +730,17 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
         return False
 
     finally:
+        release_connection_slot(connection_slot)
         if client is not None:
             if notify_started and client.is_connected:
                 try:
                     await asyncio.wait_for(client.stop_notify(HRM_CHR), timeout=5.0)
                 except Exception:
                     pass
-            if client.is_connected:
-                try:
-                    await asyncio.wait_for(client.disconnect(), timeout=5.0)
-                except Exception:
-                    pass
+            try:
+                await asyncio.wait_for(client.disconnect(), timeout=5.0)
+            except Exception:
+                pass
 
         if active_mac == mac:
             active_mac = None
