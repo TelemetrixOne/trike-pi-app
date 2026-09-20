@@ -1,6 +1,6 @@
 hpr:
   trike_id: "trike1"
-  display_name: "Ashton"
+  display_name: "Trike One"
   topic_root: "hpr"
   environment: "production"
 
@@ -280,7 +280,9 @@ gpio:
     light_bright_voltage: 3.13
 
 heart_rate:
-  active_adapter: "hci1"
+  # hci0 is the onboard adapter used for the active GATT connection.
+  active_adapter: "hci0"
+  # hci1 is the USB adapter used for continuous HRM advertisement scanning.
   scan_adapter: "hci1"
   publish_min_interval_seconds: 0.5
   no_bpm_payload: "-"
@@ -332,7 +334,7 @@ video:
   enabled: true
   mediamtx_version: "v1.19.1"
   mediamtx_arch: "linux_arm64"
-  mediamtx_sha256: "CHANGE_ME"
+  mediamtx_sha256: "31F021D518E4DA59295BE8E7170F09257CC9BE04981001DA9C2CB9BEA30B26E1"
   rtsp_port: 8554
   display:
     enabled: false

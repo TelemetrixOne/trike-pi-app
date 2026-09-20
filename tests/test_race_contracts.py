@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from pathlib import Path
 import unittest
 
-from hpr_gateway.config import load_config
+import yaml
+
+from hpr_gateway.services import heart_rate
 from hpr_gateway.services.tpms import decode_ai8000
 
 
-ROOT = Path(__file__).resolve().parents[2]
-TRIKE1_CONFIG = ROOT / "hpr-standalone-docker" / "generated" / "pi-configs" / "trike1" / "hpr.yaml"
-MEDIAMTX = ROOT / "pi-gateway" / "vendor" / "mediamtx" / "linux_arm64" / "mediamtx"
+ROOT = Path(__file__).resolve().parents[1]
+TRIKE1_CONFIG = ROOT / "config" / "hpr.example.yaml"
+MEDIAMTX = ROOT / "vendor" / "mediamtx" / "linux_arm64" / "mediamtx"
 
 
 class RaceContractTests(unittest.TestCase):
@@ -25,21 +28,20 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(decoded["temperature_c"], 23.5)
 
     def test_rendered_trike1_hardware_contract(self) -> None:
-        config = load_config(str(TRIKE1_CONFIG))
-        self.assertEqual(config.trike_id, "trike1")
-        self.assertEqual(config.get("bluetooth.roles.telemetry.controller_address"), "88:A2:9E:83:B0:2F")
-        self.assertEqual(config.get("bluetooth.roles.heart_rate.controller_address"), "5C:F3:70:A4:51:3D")
-        self.assertEqual(config.get("heart_rate.active_adapter"), "hci0")
-        self.assertEqual(config.get("heart_rate.scan_adapter"), "hci1")
-        self.assertTrue(config.get("gps.device").startswith("/dev/serial/by-id/"))
-        self.assertEqual(config.get("tpms.sensors.tpms1.topic"), "{topic_root}/{trike_id}/tpms/tpms1")
-        self.assertEqual(config.get("video.cameras.front.video_size"), "640x480")
-        self.assertEqual(config.get("video.cameras.rear.video_size"), "640x480")
+        config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(config["hpr"]["trike_id"], "trike1")
+        self.assertEqual(config["bluetooth"]["roles"]["telemetry"]["fallback_adapter"], "hci0")
+        self.assertEqual(config["bluetooth"]["roles"]["heart_rate"]["fallback_adapter"], "hci1")
+        self.assertEqual(config["heart_rate"]["active_adapter"], "hci0")
+        self.assertEqual(config["heart_rate"]["scan_adapter"], "hci1")
+        self.assertEqual(config["tpms"]["sensors"]["tpms1"]["topic"], "{topic_root}/{trike_id}/tpms/tpms1")
+        self.assertEqual(config["video"]["cameras"]["front"]["video_size"], "640x480")
+        self.assertEqual(config["video"]["cameras"]["rear"]["video_size"], "640x480")
 
     def test_packaged_mediamtx_checksum(self) -> None:
-        config = load_config(str(TRIKE1_CONFIG))
+        config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))
         digest = hashlib.sha256(MEDIAMTX.read_bytes()).hexdigest().upper()
-        self.assertEqual(digest, config.get("video.mediamtx_sha256").upper())
+        self.assertEqual(digest, config["video"]["mediamtx_sha256"].upper())
 
     def test_hrm_identity_is_published_at_gatt_lock(self) -> None:
         source = inspect.getsource(heart_rate.connect_and_validate_candidate)

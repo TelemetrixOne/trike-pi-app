@@ -1114,7 +1114,8 @@ class GPIOControlService:
 
     def _on_message(self, client, userdata, msg) -> None:
         payload = self._sanitize_payload(msg.payload)
-        if self._drs is not None and msg.topic == f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/set":
+        topic_root = MQTT.get("topic_root", "hpr")
+        if self._drs is not None and msg.topic == f"{topic_root}/{DRS['trike']}/control/drs/set":
             state = {"ON": "OPEN", "OFF": "CLOSED", "CLOSE": "CLOSED"}.get(payload, payload)
             if state not in ("OPEN", "CLOSED", "RIDER_CONTROL"):
                 LOG.warning("Ignoring invalid DRS payload on %s: %r", msg.topic, payload)

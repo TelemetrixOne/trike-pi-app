@@ -12,7 +12,7 @@ from hpr_gateway.services.trike_config_sync import ProfileApplier, profile_hash
 
 class TrikeConfigSyncTests(unittest.TestCase):
     def test_camera_location_is_merged_without_losing_encoder_settings(self):
-        source = Path(__file__).resolve().parents[2] / "config" / "hpr.example.yaml"
+        source = Path(__file__).resolve().parents[1] / "config" / "hpr.example.yaml"
         data = yaml.safe_load(source.read_text(encoding="utf-8"))
         def replace_placeholders(value):
             if isinstance(value, dict):
