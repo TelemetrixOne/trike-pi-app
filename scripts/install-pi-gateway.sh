@@ -329,14 +329,14 @@ GPSD_OPTIONS="-n"
 EOF
 
   if [ "$(cfg gps.hotplug_recovery_enabled --default true)" = "true" ]; then
-    cat > /etc/systemd/system/hpr-gps-hotplug.service <<'EOF'
+    cat > /etc/systemd/system/hpr-gps-hotplug.service <<EOF
 [Unit]
 Description=Recover gpsd after HPR GPS USB reconnect
 
 [Service]
 Type=oneshot
-ExecStartPre=/bin/sleep 2
-ExecStart=/usr/bin/systemctl restart gpsd.service
+Environment=GPS_DEVICE=${gps_device}
+ExecStart=/bin/sh -ec 'i=0; while [ ! -e "\$GPS_DEVICE" ] && [ \$i -lt 30 ]; do i=\$((i + 1)); sleep 0.5; done; test -e "\$GPS_DEVICE"; systemctl restart gpsd.service; systemctl restart hpr-gps.service'
 EOF
 
     cat > /etc/udev/rules.d/99-hpr-gps-hotplug.rules <<EOF

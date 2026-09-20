@@ -108,8 +108,8 @@ if [ "$(cfg services.gps.enabled --default false)" = "true" ] && \
     hotplug_unit=/etc/systemd/system/hpr-gps-hotplug.service
     hotplug_rule=/etc/udev/rules.d/99-hpr-gps-hotplug.rules
     if [ -f "${hotplug_unit}" ] && [ -f "${hotplug_rule}" ] \
-      && grep -Fq 'ExecStartPre=/bin/sleep 2' "${hotplug_unit}" \
-      && grep -Fq 'ExecStart=/usr/bin/systemctl restart gpsd.service' "${hotplug_unit}" \
+      && grep -Fq 'Environment=GPS_DEVICE=' "${hotplug_unit}" \
+      && grep -Fq 'systemctl restart gpsd.service; systemctl restart hpr-gps.service' "${hotplug_unit}" \
       && grep -Fq "ATTRS{idVendor}==\"${vendor_id}\"" "${hotplug_rule}" \
       && grep -Fq "ATTRS{idProduct}==\"${product_id}\"" "${hotplug_rule}" \
       && grep -Fq 'hpr-gps-hotplug.service' "${hotplug_rule}"; then
