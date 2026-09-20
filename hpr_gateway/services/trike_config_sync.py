@@ -110,15 +110,35 @@ class ProfileApplier:
 
         video = profile.get("video", {})
         video_target = candidate.setdefault("video", {})
+        previous_video = copy.deepcopy(current.get("video", {}) or {})
         video_enabled = bool(video.get("enabled"))
         video_target["enabled"] = video_enabled
         for camera_name, camera in (video.get("cameras", {}) or {}).items():
             self._merge_camera(video_target.setdefault("cameras", {}).setdefault(camera_name, {}), camera)
         candidate["services"].setdefault("video", {})["enabled"] = video_enabled
         if video_target != current.get("video") or video_enabled != current.enabled("video"):
-            changed_units["hpr-video-mediamtx.service"] = video_enabled
+            previous_without_rotation = copy.deepcopy(previous_video)
+            target_without_rotation = copy.deepcopy(video_target)
+            rotation_changed = set()
             for camera_name, camera in video_target.get("cameras", {}).items():
-                changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
+                previous_camera = previous_video.get("cameras", {}).get(camera_name, {})
+                if camera.get("rotation", "none") != previous_camera.get("rotation", "none"):
+                    rotation_changed.add(camera_name)
+                previous_without_rotation.get("cameras", {}).get(camera_name, {}).pop("rotation", None)
+                target_without_rotation.get("cameras", {}).get(camera_name, {}).pop("rotation", None)
+            rotation_only = (
+                rotation_changed
+                and previous_without_rotation == target_without_rotation
+                and video_enabled == current.enabled("video")
+            )
+            if rotation_only:
+                for camera_name in rotation_changed:
+                    camera = video_target.get("cameras", {}).get(camera_name, {})
+                    changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
+            else:
+                changed_units["hpr-video-mediamtx.service"] = video_enabled
+                for camera_name, camera in video_target.get("cameras", {}).items():
+                    changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
 
         tpms = profile.get("tpms", {})
         candidate.setdefault("tpms", {})["sensors"] = copy.deepcopy(tpms.get("sensors", {}))

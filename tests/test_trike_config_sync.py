@@ -11,7 +11,8 @@ from hpr_gateway.services.trike_config_sync import ProfileApplier, profile_hash
 
 
 class TrikeConfigSyncTests(unittest.TestCase):
-    def test_camera_location_is_merged_without_losing_encoder_settings(self):
+    @staticmethod
+    def _valid_config() -> dict:
         source = Path(__file__).resolve().parents[1] / "config" / "hpr.example.yaml"
         data = yaml.safe_load(source.read_text(encoding="utf-8"))
         def replace_placeholders(value):
@@ -30,8 +31,13 @@ class TrikeConfigSyncTests(unittest.TestCase):
         data["services"].setdefault("heart_rate", {})["enabled"] = False
         data["services"].setdefault("derailleur", {})["enabled"] = False
         data["services"].setdefault("gpio_control", {})["enabled"] = False
+        data["derailleur"]["enabled"] = False
         data["video"]["cameras"]["front"]["device"] = "/dev/v4l/by-id/old-front"
         data["video"]["mediamtx_sha256"] = "0" * 64
+        return data
+
+    def test_camera_location_is_merged_without_losing_encoder_settings(self):
+        data = self._valid_config()
         original_bitrate = data["video"]["cameras"]["front"]["bitrate"]
         profile = {
             "schema_version": 1, "trike_id": "trike1",
@@ -60,6 +66,32 @@ class TrikeConfigSyncTests(unittest.TestCase):
         self.assertEqual(applied["video"]["cameras"]["front"]["bitrate"], original_bitrate)
         self.assertEqual(applied["hpr"]["display_name"], "Project 646")
         self.assertEqual(applied["configuration"]["trike_hash"], envelope["hash"])
+
+    def test_rotation_only_restarts_affected_camera(self):
+        data = self._valid_config()
+        data.setdefault("configuration", {})["trike_hash"] = "old"
+        profile = {
+            "schema_version": 1, "trike_id": "trike1",
+            "identity": {"display_name": data["hpr"]["display_name"], "hostname": data["pi"]["hostname"]},
+            "heart_rate": {"enabled": False, "monitors": data["heart_rate"]["monitors"]},
+            "derailleur": {"enabled": False, "name": data["derailleur"]["device_name"], "mac": data["derailleur"]["mac"]},
+            "video": {"enabled": True, "cameras": {
+                "front": {"enabled": True, "device": data["video"]["cameras"]["front"]["device"], "path": "front", "rotation": "anticlockwise_90"},
+                "rear": {"enabled": True, "device": data["video"]["cameras"]["rear"]["device"], "path": "rear", "rotation": "none"},
+            }},
+            "tpms": {"tpms_enabled": data["services"]["tpms"]["enabled"], "sensors": data["tpms"]["sensors"]},
+            "power_cadence": {"power_cadence_enabled": data["services"]["power_cadence"]["enabled"], "devices": data["power_cadence"]["devices"]},
+            "gpio": {"gpio_enabled": False, "gpio": data["gpio"]},
+        }
+        envelope = {"hash": profile_hash(profile), "profile": profile}
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hpr.yaml"
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+            systemd = Mock()
+            ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
+
+        systemd.apply.assert_called_once_with("hpr-video-front.service", True)
 
 
 if __name__ == "__main__":
