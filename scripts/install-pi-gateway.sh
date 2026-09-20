@@ -595,6 +595,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   install_unit hpr-gpio-config-sync.service gpio_config_sync
   install_unit hpr-derailleur.service derailleur
   install_unit hpr-power-watch.service power_watch
+  install_unit hpr-trike-config-sync.service trike_config_sync
   configure_video
   install_marker_units
 fi
@@ -628,6 +629,10 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   enable_service_if_configured gpio_config_sync hpr-gpio-config-sync.service
   enable_service_if_configured derailleur hpr-derailleur.service
   enable_service_if_configured power_watch hpr-power-watch.service
+  systemctl enable hpr-trike-config-sync.service
+  if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
+    systemctl restart hpr-trike-config-sync.service
+  fi
   systemctl enable hpr-boot-marker.service hpr-shutdown-marker.service
   enable_service_if_configured video hpr-video-mediamtx.service
   if [ "$(cfg services.video.enabled --default false)" = "true" ]; then

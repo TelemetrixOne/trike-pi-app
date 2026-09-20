@@ -215,8 +215,10 @@ class HprConfig:
             paths: set[str] = set()
             for name, camera in cameras:
                 device = str(camera.get("device") or "")
-                if not device.startswith("/dev/v4l/by-id/"):
-                    raise ConfigError(f"video.cameras.{name}.device must use /dev/v4l/by-id/")
+                if not device.startswith(("/dev/v4l/by-id/", "/dev/v4l/by-path/")):
+                    raise ConfigError(
+                        f"video.cameras.{name}.device must use /dev/v4l/by-id/ or /dev/v4l/by-path/"
+                    )
                 for size_key in ("video_size", "stream_size"):
                     size = str(camera.get(size_key) or "")
                     if not re.fullmatch(r"[1-9][0-9]*x[1-9][0-9]*", size):
