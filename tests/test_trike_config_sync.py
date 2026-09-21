@@ -36,16 +36,17 @@ class TrikeConfigSyncTests(unittest.TestCase):
         data["video"]["mediamtx_sha256"] = "0" * 64
         return data
 
-    def test_camera_location_is_merged_without_losing_encoder_settings(self):
+    def test_centrally_managed_camera_settings_are_merged(self):
         data = self._valid_config()
-        original_bitrate = data["video"]["cameras"]["front"]["bitrate"]
         profile = {
             "schema_version": 1, "trike_id": "trike1",
             "identity": {"display_name": "Project 646", "hostname": "hpr-trike1"},
             "heart_rate": {"enabled": False, "monitors": {}},
             "derailleur": {"enabled": False, "name": "", "mac": ""},
             "video": {"enabled": True, "cameras": {
-                "front": {"enabled": True, "device": "/dev/v4l/by-path/new-front", "path": "front", "rotation": "anticlockwise_90"},
+                "front": {"enabled": True, "device": "/dev/v4l/by-path/new-front", "path": "front", "rotation": "none",
+                          "video_size": "1280x720", "stream_size": "640x360", "input_framerate": 30,
+                          "output_framerate": 25, "bitrate": "900k", "gop": 25},
                 "rear": {"enabled": False, "device": "/dev/v4l/by-path/new-rear", "path": "rear"},
             }},
             "tpms": {"tpms_enabled": False, "sensors": {}},
@@ -62,8 +63,10 @@ class TrikeConfigSyncTests(unittest.TestCase):
             applied = yaml.safe_load(path.read_text(encoding="utf-8"))
 
         self.assertEqual(applied["video"]["cameras"]["front"]["device"], "/dev/v4l/by-path/new-front")
-        self.assertEqual(applied["video"]["cameras"]["front"]["rotation"], "anticlockwise_90")
-        self.assertEqual(applied["video"]["cameras"]["front"]["bitrate"], original_bitrate)
+        self.assertEqual(applied["video"]["cameras"]["front"]["rotation"], "none")
+        self.assertEqual(applied["video"]["cameras"]["front"]["video_size"], "1280x720")
+        self.assertEqual(applied["video"]["cameras"]["front"]["stream_size"], "640x360")
+        self.assertEqual(applied["video"]["cameras"]["front"]["bitrate"], "900k")
         self.assertEqual(applied["hpr"]["display_name"], "Project 646")
         self.assertEqual(applied["configuration"]["trike_hash"], envelope["hash"])
 

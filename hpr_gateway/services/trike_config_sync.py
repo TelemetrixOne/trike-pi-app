@@ -66,7 +66,11 @@ class ProfileApplier:
 
     @staticmethod
     def _merge_camera(target: dict, source: dict) -> None:
-        for key in ("enabled", "device", "path", "rotation"):
+        for key in (
+            "enabled", "device", "path", "input_format", "video_size",
+            "stream_size", "input_framerate", "output_framerate", "bitrate",
+            "gop", "rotation",
+        ):
             if key in source:
                 target[key] = source[key]
 
@@ -82,7 +86,12 @@ class ProfileApplier:
         if envelope.get("hash") != digest:
             raise ValueError("Trike profile hash mismatch")
         if current.get("configuration.trike_hash") == digest:
-            return digest
+            camera_drift = any(
+                any(current.get(f"video.cameras.{name}.{key}") != value for key, value in camera.items())
+                for name, camera in (profile.get("video", {}).get("cameras", {}) or {}).items()
+            )
+            if not camera_drift:
+                return digest
 
         candidate = copy.deepcopy(current.data)
         changed_units: dict[str, bool] = {}
