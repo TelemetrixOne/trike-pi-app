@@ -104,6 +104,11 @@ output. The packaged MediaMTX binary is checksum-verified at install time. The
 Pi publishes only to its local MediaMTX process; the central VM reads `front`
 and `rear` over the Pi's Tailscale address.
 
+When direct HDMI picture-in-picture is enabled, one compositor opens both USB
+cameras without a network hop, centre-crops the rotated front camera to fill the
+framebuffer, overlays the rear camera at bottom right, and preserves both RTSP
+publisher outputs from the same capture process.
+
 ## Tailscale
 
 The preferred deployment path is a pre-authorized reusable Tailscale auth key, ideally tagged with `tag:hpr-gateway`.

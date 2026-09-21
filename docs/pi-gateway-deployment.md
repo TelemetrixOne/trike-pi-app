@@ -159,6 +159,13 @@ RTSP stream and direct HDMI branch. If HDMI is disconnected during startup, the
 publisher waits for `video.display.startup_wait_seconds` (10 seconds by default)
 and then keeps the network stream running.
 
+`video.display.picture_in_picture.enabled` selects the direct dual-camera
+publisher. It captures both USB cameras at `video.display.capture_size` and
+`capture_framerate`, centre-crops the main camera to fill the framebuffer, and
+places the configured PiP camera at the bottom right. The PiP width and margin
+are centrally configurable. Both RTSP streams are produced by the same process;
+the HDMI branch never decodes a network stream.
+
 ## Tailscale
 
 The simplest supported self-registration flow is:

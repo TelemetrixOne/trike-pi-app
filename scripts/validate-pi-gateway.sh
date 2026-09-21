@@ -159,19 +159,29 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
     fail mediamtx-binary "missing ${mediamtx_binary}"
   fi
   check_video_boot_policy hpr-video-mediamtx.service local-fs.target
+  pip_enabled="$(cfg video.display.picture_in_picture.enabled --default false)"
   for camera in front rear; do
     if [ "$(cfg "video.cameras.${camera}.enabled" --default false)" = "true" ]; then
       device="$(cfg "video.cameras.${camera}.device" --default '')"
       [ -e "${device}" ] \
         && pass "camera:${camera}" "${device}" \
         || fail "camera:${camera}" "not enumerated at ${device}"
-      check_unit "hpr-video-${camera}.service"
-      check_video_boot_policy "hpr-video-${camera}.service" hpr-video-mediamtx.service
+      if [ "${pip_enabled}" != "true" ]; then
+        check_unit "hpr-video-${camera}.service"
+        check_video_boot_policy "hpr-video-${camera}.service" hpr-video-mediamtx.service
+      fi
     fi
   done
   if [ "$(cfg video.display.enabled --default false)" = "true" ]; then
     display_camera="$(cfg video.display.camera --default front)"
-    if [ "$(cfg "video.cameras.${display_camera}.enabled" --default false)" = "true" ]; then
+    if [ "${pip_enabled}" = "true" ]; then
+      pass hdmi-display "direct dual-camera USB compositor"
+      check_unit hpr-video-compositor.service
+      compositor_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
+      grep -q 'hpr-video-compose.sh' <<<"${compositor_text}" \
+        && pass hdmi-pip-direct "local V4L2 compositor" \
+        || fail hdmi-pip-direct "compositor unit is not direct-camera configured"
+    elif [ "$(cfg "video.cameras.${display_camera}.enabled" --default false)" = "true" ]; then
       pass hdmi-display "direct USB output integrated with hpr-video-${display_camera}.service"
     else
       fail hdmi-display "configured camera is disabled: ${display_camera}"
@@ -184,10 +194,16 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
       && pass hdmi-display-driver "FFmpeg framebuffer output available" \
       || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
     check_unit hpr-video-console.service
-    display_unit_text="$(systemctl cat "hpr-video-${display_camera}.service" 2>/dev/null || true)"
+    if [ "${pip_enabled}" = "true" ]; then
+      display_unit_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
+      display_unit_name="hpr-video-compositor.service"
+    else
+      display_unit_text="$(systemctl cat "hpr-video-${display_camera}.service" 2>/dev/null || true)"
+      display_unit_name="hpr-video-${display_camera}.service"
+    fi
     grep -Eq '^After=.*hpr-video-console\.service' <<<"${display_unit_text}" \
       && grep -Eq '^Requires=.*hpr-video-console\.service' <<<"${display_unit_text}" \
-      && pass hdmi-console-dependency "hpr-video-${display_camera}.service" \
+      && pass hdmi-console-dependency "${display_unit_name}" \
       || fail hdmi-console-dependency "display camera does not require console preparation"
     [ "$(systemctl is-enabled getty@tty1.service 2>/dev/null || true)" = "masked" ] \
       && pass hdmi-console-getty "tty1 login cursor suppressed" \

@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import yaml
 
@@ -92,6 +92,40 @@ class TrikeConfigSyncTests(unittest.TestCase):
             ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
 
         systemd.apply.assert_called_once_with("hpr-video-front.service", True)
+
+    def test_enabling_pip_switches_to_direct_compositor(self):
+        data = self._valid_config()
+        profile = {
+            "schema_version": 1, "trike_id": "trike1",
+            "identity": {"display_name": data["hpr"]["display_name"], "hostname": data["pi"]["hostname"]},
+            "heart_rate": {"enabled": False, "monitors": data["heart_rate"]["monitors"]},
+            "derailleur": {"enabled": False, "name": data["derailleur"]["device_name"], "mac": data["derailleur"]["mac"]},
+            "video": {"enabled": True, "display": {
+                "enabled": True, "camera": "front", "device": "/dev/fb0", "pixel_format": "rgb565le",
+                "capture_size": "1920x1080", "capture_framerate": 30,
+                "picture_in_picture": {"enabled": True, "camera": "rear", "width_percent": 25, "margin_pixels": 24},
+            }, "cameras": {
+                "front": {"enabled": True, "device": data["video"]["cameras"]["front"]["device"], "path": "front", "rotation": "anticlockwise_90"},
+                "rear": {"enabled": True, "device": data["video"]["cameras"]["rear"]["device"], "path": "rear", "rotation": "none"},
+            }},
+            "tpms": {"tpms_enabled": data["services"]["tpms"]["enabled"], "sensors": data["tpms"]["sensors"]},
+            "power_cadence": {"power_cadence_enabled": data["services"]["power_cadence"]["enabled"], "devices": data["power_cadence"]["devices"]},
+            "gpio": {"gpio_enabled": False, "gpio": data["gpio"]},
+        }
+        envelope = {"hash": profile_hash(profile), "profile": profile}
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hpr.yaml"
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+            systemd = Mock()
+            ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
+
+        self.assertEqual(systemd.apply.call_args_list, [
+            call("hpr-video-mediamtx.service", True),
+            call("hpr-video-front.service", False),
+            call("hpr-video-rear.service", False),
+            call("hpr-video-compositor.service", True),
+        ])
 
 
 if __name__ == "__main__":

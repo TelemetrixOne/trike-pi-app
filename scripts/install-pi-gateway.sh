@@ -438,6 +438,7 @@ configure_video() {
   install -d "${video_root}"
   install -m 0755 "${binary_source}" "${video_root}/mediamtx"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-publish.sh" "${video_root}/hpr-video-publish.sh"
+  install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose.sh" "${video_root}/hpr-video-compose.sh"
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml
@@ -487,9 +488,10 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
 
-  local camera display_enabled display_camera camera_after camera_requires
+  local camera display_enabled display_camera camera_after camera_requires pip_enabled
   display_enabled="$(cfg video.display.enabled --default false)"
   display_camera="$(cfg video.display.camera --default front)"
+  pip_enabled="$(cfg video.display.picture_in_picture.enabled --default false)"
   if [ "${display_enabled}" = "true" ]; then
     cat > /etc/systemd/system/hpr-video-console.service <<'EOF'
 [Unit]
@@ -549,6 +551,32 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
   done
+
+  cat > /etc/systemd/system/hpr-video-compositor.service <<EOF
+[Unit]
+Description=HPR direct dual-camera HDMI compositor and publishers
+After=hpr-video-mediamtx.service hpr-video-console.service
+Requires=hpr-video-mediamtx.service hpr-video-console.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+SupplementaryGroups=video render
+WorkingDirectory=${video_root}
+Environment=HPR_CONFIG_PATH=${CONFIG_PATH}
+Environment=HPR_INSTALL_ROOT=${INSTALL_ROOT}
+ExecStart=${video_root}/hpr-video-compose.sh
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
   systemctl disable --now hpr-video-display.service 2>/dev/null || true
   rm -f /etc/systemd/system/hpr-video-display.service
 }
@@ -642,14 +670,23 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
         systemctl restart hpr-video-console.service
       fi
     fi
-    for camera in front rear; do
-      if [ "$(cfg "video.cameras.${camera}.enabled" --default false)" = "true" ]; then
-        systemctl enable "hpr-video-${camera}.service"
-        if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
-          systemctl restart "hpr-video-${camera}.service"
-        fi
+    if [ "$(cfg video.display.picture_in_picture.enabled --default false)" = "true" ]; then
+      systemctl disable --now hpr-video-front.service hpr-video-rear.service 2>/dev/null || true
+      systemctl enable hpr-video-compositor.service
+      if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
+        systemctl restart hpr-video-compositor.service
       fi
-    done
+    else
+      systemctl disable --now hpr-video-compositor.service 2>/dev/null || true
+      for camera in front rear; do
+        if [ "$(cfg "video.cameras.${camera}.enabled" --default false)" = "true" ]; then
+          systemctl enable "hpr-video-${camera}.service"
+          if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
+            systemctl restart "hpr-video-${camera}.service"
+          fi
+        fi
+      done
+    fi
   fi
 fi
 enable_service_if_configured gps hpr-gps.service

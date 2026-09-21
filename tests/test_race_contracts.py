@@ -15,6 +15,7 @@ from hpr_gateway.services.tpms import decode_ai8000
 ROOT = Path(__file__).resolve().parents[1]
 TRIKE1_CONFIG = ROOT / "config" / "hpr.example.yaml"
 MEDIAMTX = ROOT / "vendor" / "mediamtx" / "linux_arm64" / "mediamtx"
+COMPOSITOR = ROOT / "bin" / "hpr-video-compose.sh"
 
 
 class RaceContractTests(unittest.TestCase):
@@ -39,6 +40,15 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(config["video"]["cameras"]["front"]["video_size"], "640x480")
         self.assertEqual(config["video"]["cameras"]["front"]["rotation"], "none")
         self.assertEqual(config["video"]["cameras"]["rear"]["video_size"], "640x480")
+        self.assertEqual(config["video"]["display"]["capture_size"], "1920x1080")
+        self.assertEqual(config["video"]["display"]["capture_framerate"], 30)
+
+    def test_hdmi_compositor_uses_direct_camera_inputs(self) -> None:
+        source = COMPOSITOR.read_text(encoding="utf-8")
+        self.assertIn('-f v4l2', source)
+        self.assertIn('overlay=x=W-w-', source)
+        self.assertIn('-f fbdev', source)
+        self.assertNotIn('rtsp://127.0.0.1:8554/${MAIN_PATH}" -i', source)
 
     def test_packaged_mediamtx_checksum(self) -> None:
         config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))

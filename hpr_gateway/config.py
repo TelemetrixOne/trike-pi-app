@@ -240,6 +240,26 @@ class HprConfig:
             checksum = str(self.get("video.mediamtx_sha256", "") or "")
             if not re.fullmatch(r"[0-9A-Fa-f]{64}", checksum):
                 raise ConfigError("video.mediamtx_sha256 must be a 64-digit SHA256")
+            if self.get("video.display.enabled", False):
+                capture_size = str(self.get("video.display.capture_size", "1920x1080"))
+                if not re.fullmatch(r"[1-9][0-9]*x[1-9][0-9]*", capture_size):
+                    raise ConfigError("video.display.capture_size must use WIDTHxHEIGHT")
+                if float(self.get("video.display.capture_framerate", 30)) <= 0:
+                    raise ConfigError("video.display.capture_framerate must be positive")
+                if self.get("video.display.picture_in_picture.enabled", False):
+                    main_camera = str(self.get("video.display.camera", "front"))
+                    pip_camera = str(self.get("video.display.picture_in_picture.camera", "rear"))
+                    camera_map = self.get("video.cameras", {}) or {}
+                    if main_camera == pip_camera:
+                        raise ConfigError("video display and PiP cameras must be different")
+                    for camera_name in (main_camera, pip_camera):
+                        if not bool((camera_map.get(camera_name) or {}).get("enabled")):
+                            raise ConfigError(f"video display camera is disabled: {camera_name}")
+                    width_percent = int(self.get("video.display.picture_in_picture.width_percent", 25))
+                    if not 10 <= width_percent <= 50:
+                        raise ConfigError("video.display.picture_in_picture.width_percent must be 10-50")
+                    if int(self.get("video.display.picture_in_picture.margin_pixels", 24)) < 0:
+                        raise ConfigError("video.display.picture_in_picture.margin_pixels must not be negative")
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> HprConfig:

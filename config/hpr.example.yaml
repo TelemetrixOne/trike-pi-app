@@ -341,6 +341,13 @@ video:
     camera: "front"
     device: "/dev/fb0"
     pixel_format: "rgb565le"
+    capture_size: "1920x1080"
+    capture_framerate: 30
+    picture_in_picture:
+      enabled: false
+      camera: "rear"
+      width_percent: 25
+      margin_pixels: 24
   cameras:
     front:
       enabled: true
