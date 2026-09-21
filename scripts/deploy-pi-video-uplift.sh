@@ -28,6 +28,10 @@ done
 
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
+apt-get update
+apt-get install -y --no-install-recommends \
+  gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-gl
 install -d -m 0700 "${BACKUP_ROOT}"
 cp -a "${CONFIG_PATH}" "${BACKUP_ROOT}/hpr.yaml"
 for relative in \

@@ -136,6 +136,8 @@ if command -v apt-get >/dev/null 2>&1; then
   if [ "${INSTALL_SCOPE}" = "all" ]; then
     apt-get install -y \
       bluez bluetooth rfkill ffmpeg v4l-utils i2c-tools python3-smbus \
+      gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+      gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-gl \
       build-essential python3-dev swig
   fi
 fi
