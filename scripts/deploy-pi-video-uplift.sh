@@ -28,7 +28,12 @@ done
 
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
-apt-get update
+if ! apt-get update \
+  -o Acquire::Retries=1 \
+  -o Acquire::http::Timeout=20 \
+  -o Acquire::https::Timeout=20; then
+  echo "Package index refresh failed; using the existing Pi package index." >&2
+fi
 apt-get install -y --no-install-recommends \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-gl
