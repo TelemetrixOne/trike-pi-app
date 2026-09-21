@@ -46,7 +46,7 @@ class RaceContractTests(unittest.TestCase):
     def test_hdmi_compositor_uses_direct_camera_inputs(self) -> None:
         source = COMPOSITOR.read_text(encoding="utf-8")
         self.assertIn('v4l2src', source)
-        self.assertIn('v4l2jpegdec', source)
+        self.assertIn('jpegdec idct-method=ifast', source)
         self.assertIn('glvideomixer', source)
         self.assertIn('glimagesink', source)
         self.assertIn('aspect-preserving crop', source)
