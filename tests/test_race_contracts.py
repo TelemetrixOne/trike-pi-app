@@ -45,11 +45,10 @@ class RaceContractTests(unittest.TestCase):
 
     def test_hdmi_compositor_uses_direct_camera_inputs(self) -> None:
         source = COMPOSITOR.read_text(encoding="utf-8")
-        self.assertIn('v4l2src', source)
-        self.assertIn('jpegdec idct-method=ifast', source)
-        self.assertIn('glvideomixer', source)
-        self.assertIn('glimagesink', source)
-        self.assertIn('aspect-preserving crop', source)
+        self.assertIn('-f v4l2', source)
+        self.assertIn('overlay=x=W-w-', source)
+        self.assertIn('-f fbdev', source)
+        self.assertIn('force_original_aspect_ratio=increase,crop=', source)
         self.assertNotIn('rtsp://127.0.0.1:8554/${MAIN_PATH}" -i', source)
 
     def test_packaged_mediamtx_checksum(self) -> None:

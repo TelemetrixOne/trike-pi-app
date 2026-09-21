@@ -5,58 +5,39 @@ INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 PYTHON="${INSTALL_ROOT}/venv/bin/python"
 cfg() { PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" -m hpr_gateway.config_value --config "${CONFIG_PATH}" "$@"; }
 cam() { cfg "video.cameras.${1}.${2}" --default "${3}"; }
-flip() {
-  case "$1" in
-    none) printf identity;; clockwise_90) printf 'glvideoflip method=clockwise';;
-    180) printf 'glvideoflip method=rotate-180';;
-    anticlockwise_90) printf 'glvideoflip method=counterclockwise';;
-    *) echo "Unsupported camera rotation: $1" >&2; return 1;;
-  esac
+rotation_filter() {
+  case "$1" in none) printf '';; clockwise_90) printf 'transpose=clock,';;
+    180) printf 'hflip,vflip,';; anticlockwise_90) printf 'transpose=cclock,';;
+    *) echo "Unsupported camera rotation: $1" >&2; return 1;; esac
 }
-soft_flip() {
-  case "$1" in
-    none) printf identity;; clockwise_90) printf 'videoflip method=clockwise';;
-    180) printf 'videoflip method=rotate-180';;
-    anticlockwise_90) printf 'videoflip method=counterclockwise';;
-  esac
-}
-bitrate_kbps() { case "$1" in *k) echo "${1%k}";; *M) echo "$((${1%M}*1000))";; *) echo "$(($1/1000))";; esac; }
-
 MAIN="$(cfg video.display.camera --default front)"; PIP="$(cfg video.display.picture_in_picture.camera --default rear)"
-SIZE="$(cfg video.display.capture_size --default 1920x1080)"; FPS="$(cfg video.display.capture_framerate --default 30)"
+DISPLAY_DEVICE="$(cfg video.display.device --default /dev/fb0)"; PIXEL_FORMAT="$(cfg video.display.pixel_format --default rgb565le)"
+CAPTURE_SIZE="$(cfg video.display.capture_size --default 1280x720)"; CAPTURE_FPS="$(cfg video.display.capture_framerate --default 30)"
 PIP_PC="$(cfg video.display.picture_in_picture.width_percent --default 25)"; MARGIN="$(cfg video.display.picture_in_picture.margin_pixels --default 24)"
 MD="$(cam "$MAIN" device '')"; PD="$(cam "$PIP" device '')"; MP="$(cam "$MAIN" path "$MAIN")"; PP="$(cam "$PIP" path "$PIP")"
+MS="$(cam "$MAIN" stream_size 640x360)"; PS="$(cam "$PIP" stream_size 640x360)"
+MSW="${MS%x*}"; MSH="${MS#*x}"; PSW="${PS%x*}"; PSH="${PS#*x}"
 MF="$(cam "$MAIN" output_framerate 25)"; PF="$(cam "$PIP" output_framerate 25)"; MB="$(cam "$MAIN" bitrate 700k)"; PB="$(cam "$PIP" bitrate 700k)"
-MR="$(cam "$MAIN" rotation none)"; PR="$(cam "$PIP" rotation none)"; MGF="$(flip "$MR")"; PGF="$(flip "$PR")"; MSF="$(soft_flip "$MR")"; PSF="$(soft_flip "$PR")"
-CW="${SIZE%x*}"; CH="${SIZE#*x}"; DS="$(tr ',' 'x' </sys/class/graphics/fb0/virtual_size)"
-[[ "$DS" =~ ^[0-9]+x[0-9]+$ ]] || { echo 'Cannot determine native display size' >&2; exit 12; }
-DW="${DS%x*}"; DH="${DS#*x}"; PW=$((DW*PIP_PC/100)); PH=$((PW*CH/CW)); PX=$((DW-PW-MARGIN)); PY=$((DH-PH-MARGIN))
+MG="$(cam "$MAIN" gop 25)"; PG="$(cam "$PIP" gop 25)"; MR="$(rotation_filter "$(cam "$MAIN" rotation none)")"; PR="$(rotation_filter "$(cam "$PIP" rotation none)")"
 [[ -n "$MD" && -n "$PD" && "$MD" != "$PD" ]] || { echo 'Cameras need distinct stable device paths' >&2; exit 10; }
 for d in "$MD" "$PD"; do while [[ ! -e "$d" ]]; do echo "Waiting for $d" >&2; sleep 5; done; done
+while [[ ! -e "$DISPLAY_DEVICE" ]]; do echo "Waiting for $DISPLAY_DEVICE" >&2; sleep 3; done
+DS="$(tr ',' 'x' </sys/class/graphics/fb0/virtual_size)"; [[ "$DS" =~ ^[0-9]+x[0-9]+$ ]] || exit 12
+DW="${DS%x*}"; DH="${DS#*x}"; PW=$((DW*PIP_PC/100)); PH=$((PW*9/16))
 
-# Calculate an aspect-preserving crop in source orientation. This removes edges
-# before GPU rotation, fills the native panel, and never stretches the picture.
-MCROP=''
-if [[ "$MR" == clockwise_90 || "$MR" == anticlockwise_90 ]]; then
-  cropw=$((CH*DH/DW)); cropw=$((cropw/2*2)); left=$(((CW-cropw)/2)); right=$((CW-cropw-left))
-  (( cropw < CW )) && MCROP="videocrop left=$left right=$right ! "
-else
-  croph=$((CW*DH/DW)); croph=$((croph/2*2)); top=$(((CH-croph)/2)); bottom=$((CH-croph-top))
-  (( croph < CH )) && MCROP="videocrop top=$top bottom=$bottom ! "
-fi
-for e in v4l2src jpegparse jpegdec glupload glvideoflip glvideomixer glimagesink x264enc rtspclientsink; do
-  gst-inspect-1.0 "$e" >/dev/null 2>&1 || { echo "Missing GStreamer element: $e" >&2; exit 13; }
-done
-export GST_GL_PLATFORM=egl GST_GL_WINDOW=gbm
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/hpr-video-cache}"
-mkdir -p "${XDG_CACHE_HOME}"
-echo "GPU compositor: ${SIZE}@${FPS} to native ${DS}; aspect crop; PiP ${PW}x${PH}." >&2
-exec gst-launch-1.0 -e \
-  glvideomixer name=mix background=black sink_0::xpos=0 sink_0::ypos=0 sink_0::width="$DW" sink_0::height="$DH" sink_1::xpos="$PX" sink_1::ypos="$PY" sink_1::width="$PW" sink_1::height="$PH" \
-    ! "video/x-raw(memory:GLMemory),width=$DW,height=$DH,framerate=$FPS/1" ! glimagesink sync=false qos=false force-aspect-ratio=false \
-  v4l2src device="$MD" io-mode=mmap do-timestamp=true ! "image/jpeg,width=$CW,height=$CH,framerate=$FPS/1" ! jpegparse ! jpegdec idct-method=ifast ! tee name=main \
-  main. ! queue leaky=downstream max-size-buffers=2 ! $MCROP glupload ! glcolorconvert ! $MGF ! mix.sink_0 \
-  main. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $MSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$MF/1,format=I420" ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$(bitrate_kbps "$MB")" key-int-max="$MF" threads=2 ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$MP" protocols=tcp latency=0 \
-  v4l2src device="$PD" io-mode=mmap do-timestamp=true ! "image/jpeg,width=$CW,height=$CH,framerate=$FPS/1" ! jpegparse ! jpegdec idct-method=ifast ! tee name=pip \
-  pip. ! queue leaky=downstream max-size-buffers=2 ! glupload ! glcolorconvert ! $PGF ! mix.sink_1 \
-  pip. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $PSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$PF/1,format=I420" ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$(bitrate_kbps "$PB")" key-int-max="$PF" threads=2 ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$PP" protocols=tcp latency=0
+# Build a correctly oriented landscape frame first. Scale-to-fill then removes
+# only the destination-aspect edges needed for HDMI or the web stream.
+F="[0:v]split=2[mn0][md0];[1:v]split=2[pn0][pd0];"
+F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
+F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+F+="[md0]${MR}fps=${CAPTURE_FPS},scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
+F+="[pd0]${PR}fps=${CAPTURE_FPS},scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
+F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=1[display]"
+echo "Direct framebuffer compositor: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; PiP ${PW}x${PH}." >&2
+exec /usr/bin/ffmpeg -hide_banner -nostdin -fflags nobuffer -flags low_delay \
+  -thread_queue_size 16 -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$MD" \
+  -thread_queue_size 16 -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$PD" \
+  -filter_complex "$F" -an \
+  -map '[mn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$MB" -maxrate "$MB" -bufsize 140k -g "$MG" -keyint_min "$MG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$MP" \
+  -map '[pn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$PB" -maxrate "$PB" -bufsize 140k -g "$PG" -keyint_min "$PG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PP" \
+  -map '[display]' -c:v rawvideo -pix_fmt "$PIXEL_FORMAT" -f fbdev "$DISPLAY_DEVICE"
