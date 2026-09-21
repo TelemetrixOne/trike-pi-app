@@ -42,6 +42,7 @@ class RaceContractTests(unittest.TestCase):
         self.assertEqual(config["video"]["cameras"]["rear"]["video_size"], "640x480")
         self.assertEqual(config["video"]["display"]["capture_size"], "1920x1080")
         self.assertEqual(config["video"]["display"]["capture_framerate"], 30)
+        self.assertEqual(config["video"]["display"]["input_queue_size"], 2)
 
     def test_hdmi_compositor_uses_direct_camera_inputs(self) -> None:
         source = COMPOSITOR.read_text(encoding="utf-8")
@@ -49,6 +50,9 @@ class RaceContractTests(unittest.TestCase):
         self.assertIn('overlay=x=W-w-', source)
         self.assertIn('-f fbdev', source)
         self.assertIn('force_original_aspect_ratio=increase,crop=', source)
+        self.assertIn('-thread_queue_size "$INPUT_QUEUE_SIZE"', source)
+        self.assertIn('shortest=0:repeatlast=1:eof_action=repeat', source)
+        self.assertNotIn('[md0]${MR}fps=', source)
         self.assertNotIn('rtsp://127.0.0.1:8554/${MAIN_PATH}" -i', source)
 
     def test_packaged_mediamtx_checksum(self) -> None:

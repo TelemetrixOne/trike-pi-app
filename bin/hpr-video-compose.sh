@@ -13,6 +13,7 @@ rotation_filter() {
 MAIN="$(cfg video.display.camera --default front)"; PIP="$(cfg video.display.picture_in_picture.camera --default rear)"
 DISPLAY_DEVICE="$(cfg video.display.device --default /dev/fb0)"; PIXEL_FORMAT="$(cfg video.display.pixel_format --default rgb565le)"
 CAPTURE_SIZE="$(cfg video.display.capture_size --default 1280x720)"; CAPTURE_FPS="$(cfg video.display.capture_framerate --default 30)"
+INPUT_QUEUE_SIZE="$(cfg video.display.input_queue_size --default 2)"
 PIP_PC="$(cfg video.display.picture_in_picture.width_percent --default 25)"; MARGIN="$(cfg video.display.picture_in_picture.margin_pixels --default 24)"
 MD="$(cam "$MAIN" device '')"; PD="$(cam "$PIP" device '')"; MP="$(cam "$MAIN" path "$MAIN")"; PP="$(cam "$PIP" path "$PIP")"
 MS="$(cam "$MAIN" stream_size 640x360)"; PS="$(cam "$PIP" stream_size 640x360)"
@@ -30,14 +31,16 @@ DW="${DS%x*}"; DH="${DS#*x}"; PW=$((DW*PIP_PC/100)); PH=$((PW*9/16))
 F="[0:v]split=2[mn0][md0];[1:v]split=2[pn0][pd0];"
 F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
 F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
-F+="[md0]${MR}fps=${CAPTURE_FPS},scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
-F+="[pd0]${PR}fps=${CAPTURE_FPS},scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
-F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=1[display]"
-echo "Direct framebuffer compositor: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; PiP ${PW}x${PH}." >&2
+F+="[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
+F+="[pd0]${PR}scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
+# The rider view follows the front camera clock. A stopped rear camera must not
+# terminate the display, and only the most recent rear frame is repeated.
+F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[display]"
+echo "Low-latency framebuffer compositor: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; PiP ${PW}x${PH}; input queues ${INPUT_QUEUE_SIZE}." >&2
 exec /usr/bin/ffmpeg -hide_banner -nostdin -fflags nobuffer -flags low_delay \
-  -thread_queue_size 16 -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$MD" \
-  -thread_queue_size 16 -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$PD" \
-  -filter_complex "$F" -an \
+  -thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$MD" \
+  -thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$PD" \
+  -filter_complex_threads 4 -filter_complex "$F" -an \
   -map '[mn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$MB" -maxrate "$MB" -bufsize 140k -g "$MG" -keyint_min "$MG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$MP" \
   -map '[pn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$PB" -maxrate "$PB" -bufsize 140k -g "$PG" -keyint_min "$PG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PP" \
   -map '[display]' -c:v rawvideo -pix_fmt "$PIXEL_FORMAT" -f fbdev "$DISPLAY_DEVICE"

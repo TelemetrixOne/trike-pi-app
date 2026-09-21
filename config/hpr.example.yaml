@@ -343,6 +343,7 @@ video:
     pixel_format: "rgb565le"
     capture_size: "1920x1080"
     capture_framerate: 30
+    input_queue_size: 2
     picture_in_picture:
       enabled: false
       camera: "rear"

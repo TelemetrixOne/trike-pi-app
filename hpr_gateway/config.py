@@ -246,6 +246,9 @@ class HprConfig:
                     raise ConfigError("video.display.capture_size must use WIDTHxHEIGHT")
                 if float(self.get("video.display.capture_framerate", 30)) <= 0:
                     raise ConfigError("video.display.capture_framerate must be positive")
+                input_queue_size = int(self.get("video.display.input_queue_size", 2))
+                if not 1 <= input_queue_size <= 4:
+                    raise ConfigError("video.display.input_queue_size must be 1-4")
                 if self.get("video.display.picture_in_picture.enabled", False):
                     main_camera = str(self.get("video.display.camera", "front"))
                     pip_camera = str(self.get("video.display.picture_in_picture.camera", "rear"))
