@@ -48,6 +48,8 @@ for e in v4l2src jpegparse jpegdec glupload glvideoflip glvideomixer glimagesink
   gst-inspect-1.0 "$e" >/dev/null 2>&1 || { echo "Missing GStreamer element: $e" >&2; exit 13; }
 done
 export GST_GL_PLATFORM=egl GST_GL_WINDOW=gbm
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/hpr-video-cache}"
+mkdir -p "${XDG_CACHE_HOME}"
 echo "GPU compositor: ${SIZE}@${FPS} to native ${DS}; aspect crop; PiP ${PW}x${PH}." >&2
 exec gst-launch-1.0 -e \
   glvideomixer name=mix background=black sink_0::xpos=0 sink_0::ypos=0 sink_0::width="$DW" sink_0::height="$DH" sink_1::xpos="$PX" sink_1::ypos="$PY" sink_1::width="$PW" sink_1::height="$PH" \

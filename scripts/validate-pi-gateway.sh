@@ -190,9 +190,25 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
     [ -e "${display_device}" ] \
       && pass hdmi-framebuffer "${display_device}" \
       || fail hdmi-framebuffer "display device is unavailable: ${display_device}"
-    /usr/bin/ffmpeg -hide_banner -devices 2>/dev/null | grep -q 'fbdev' \
-      && pass hdmi-display-driver "FFmpeg framebuffer output available" \
-      || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
+    if [ "${pip_enabled}" = "true" ]; then
+      gst-inspect-1.0 glvideomixer glimagesink jpegdec x264enc rtspclientsink >/dev/null 2>&1 \
+        && pass hdmi-display-driver "GStreamer EGL/GBM compositor available" \
+        || fail hdmi-display-driver "required GStreamer compositor elements are unavailable"
+      drm_connector="$(find /sys/class/drm -maxdepth 1 -type l -name 'card*-HDMI-A-*' -print 2>/dev/null | while read -r connector; do [ "$(cat "${connector}/status" 2>/dev/null)" = connected ] && { echo "${connector}"; break; }; done)"
+      if [ -n "${drm_connector}" ]; then
+        native_mode="$(head -n 1 "${drm_connector}/modes" 2>/dev/null || true)"
+        framebuffer_mode="$(tr ',' 'x' < /sys/class/graphics/fb0/virtual_size 2>/dev/null || true)"
+        [ "${native_mode}" = "${framebuffer_mode}" ] \
+          && pass hdmi-native-mode "${native_mode}" \
+          || fail hdmi-native-mode "DRM ${native_mode:-unknown}, framebuffer ${framebuffer_mode:-unknown}"
+      else
+        fail hdmi-native-mode "no connected HDMI DRM connector"
+      fi
+    else
+      /usr/bin/ffmpeg -hide_banner -devices 2>/dev/null | grep -q 'fbdev' \
+        && pass hdmi-display-driver "FFmpeg framebuffer output available" \
+        || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
+    fi
     check_unit hpr-video-console.service
     if [ "${pip_enabled}" = "true" ]; then
       display_unit_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
