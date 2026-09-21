@@ -20,7 +20,7 @@ soft_flip() {
     anticlockwise_90) printf 'videoflip method=counterclockwise';;
   esac
 }
-bitrate() { case "$1" in *k) echo "$((${1%k}*1000))";; *M) echo "$((${1%M}*1000000))";; *) echo "$1";; esac; }
+bitrate_kbps() { case "$1" in *k) echo "${1%k}";; *M) echo "$((${1%M}*1000))";; *) echo "$(($1/1000))";; esac; }
 
 MAIN="$(cfg video.display.camera --default front)"; PIP="$(cfg video.display.picture_in_picture.camera --default rear)"
 SIZE="$(cfg video.display.capture_size --default 1920x1080)"; FPS="$(cfg video.display.capture_framerate --default 30)"
@@ -44,7 +44,7 @@ else
   croph=$((CW*DH/DW)); croph=$((croph/2*2)); top=$(((CH-croph)/2)); bottom=$((CH-croph-top))
   (( croph < CH )) && MCROP="videocrop top=$top bottom=$bottom ! "
 fi
-for e in v4l2src jpegparse jpegdec glupload glvideoflip glvideomixer glimagesink v4l2h264enc rtspclientsink; do
+for e in v4l2src jpegparse jpegdec glupload glvideoflip glvideomixer glimagesink x264enc rtspclientsink; do
   gst-inspect-1.0 "$e" >/dev/null 2>&1 || { echo "Missing GStreamer element: $e" >&2; exit 13; }
 done
 export GST_GL_PLATFORM=egl GST_GL_WINDOW=gbm
@@ -54,7 +54,7 @@ exec gst-launch-1.0 -e \
     ! "video/x-raw(memory:GLMemory),width=$DW,height=$DH,framerate=$FPS/1" ! glimagesink sync=false qos=false force-aspect-ratio=false \
   v4l2src device="$MD" io-mode=mmap do-timestamp=true ! "image/jpeg,width=$CW,height=$CH,framerate=$FPS/1" ! jpegparse ! jpegdec idct-method=ifast ! tee name=main \
   main. ! queue leaky=downstream max-size-buffers=2 ! $MCROP glupload ! glcolorconvert ! $MGF ! mix.sink_0 \
-  main. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $MSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$MF/1,format=I420" ! v4l2h264enc extra-controls="controls,video_bitrate=$(bitrate "$MB"),repeat_sequence_header=1" ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$MP" protocols=tcp latency=0 \
+  main. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $MSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$MF/1,format=I420" ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$(bitrate_kbps "$MB")" key-int-max="$MF" threads=2 ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$MP" protocols=tcp latency=0 \
   v4l2src device="$PD" io-mode=mmap do-timestamp=true ! "image/jpeg,width=$CW,height=$CH,framerate=$FPS/1" ! jpegparse ! jpegdec idct-method=ifast ! tee name=pip \
   pip. ! queue leaky=downstream max-size-buffers=2 ! glupload ! glcolorconvert ! $PGF ! mix.sink_1 \
-  pip. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $PSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$PF/1,format=I420" ! v4l2h264enc extra-controls="controls,video_bitrate=$(bitrate "$PB"),repeat_sequence_header=1" ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$PP" protocols=tcp latency=0
+  pip. ! queue leaky=downstream max-size-buffers=2 ! videoconvert ! $PSF ! videoscale ! videorate ! "video/x-raw,width=640,height=480,framerate=$PF/1,format=I420" ! x264enc tune=zerolatency speed-preset=ultrafast bitrate="$(bitrate_kbps "$PB")" key-int-max="$PF" threads=2 ! h264parse config-interval=-1 ! rtspclientsink location="rtsp://127.0.0.1:8554/$PP" protocols=tcp latency=0
