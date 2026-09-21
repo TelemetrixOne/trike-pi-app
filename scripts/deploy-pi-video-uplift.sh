@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 CONFIG_PATH="${HPR_CONFIG_PATH:-/etc/hpr/hpr.yaml}"
 START_SERVICES="${HPR_START_SERVICES:-true}"
+SKIP_APT_UPDATE="${HPR_SKIP_APT_UPDATE:-false}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_ROOT="/opt/hpr/backups/video-uplift-${STAMP}"
 
@@ -28,11 +29,13 @@ done
 
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
-if ! apt-get update \
-  -o Acquire::Retries=1 \
-  -o Acquire::http::Timeout=20 \
-  -o Acquire::https::Timeout=20; then
-  echo "Package index refresh failed; using the existing Pi package index." >&2
+if [ "${SKIP_APT_UPDATE}" != "true" ]; then
+  if ! apt-get update \
+    -o Acquire::Retries=1 \
+    -o Acquire::http::Timeout=20 \
+    -o Acquire::https::Timeout=20; then
+    echo "Package index refresh failed; using the existing Pi package index." >&2
+  fi
 fi
 apt-get install -y --no-install-recommends \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
