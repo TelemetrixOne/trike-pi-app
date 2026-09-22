@@ -55,6 +55,14 @@ class RaceContractTests(unittest.TestCase):
         self.assertNotIn('[md0]${MR}fps=', source)
         self.assertNotIn('rtsp://127.0.0.1:8554/${MAIN_PATH}" -i', source)
 
+    def test_video_publishers_do_not_wait_for_hdmi(self) -> None:
+        source = COMPOSITOR.read_text(encoding="utf-8")
+        self.assertNotIn('while [[ ! -e "$DISPLAY_DEVICE" ]]', source)
+        self.assertIn('if [[ -e "$DISPLAY_DEVICE" ]]', source)
+        self.assertIn('publishing front and rear streams without HDMI output', source)
+        self.assertIn('DISPLAY_OUTPUT=()', source)
+        self.assertIn('"${DISPLAY_OUTPUT[@]}"', source)
+
     def test_packaged_mediamtx_checksum(self) -> None:
         config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))
         digest = hashlib.sha256(MEDIAMTX.read_bytes()).hexdigest().upper()
