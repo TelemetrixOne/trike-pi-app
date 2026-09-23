@@ -53,6 +53,9 @@ class RaceContractTests(unittest.TestCase):
         self.assertIn('-thread_queue_size "$INPUT_QUEUE_SIZE"', source)
         self.assertIn('shortest=0:repeatlast=1:eof_action=repeat', source)
         self.assertNotIn('[md0]${MR}fps=', source)
+        self.assertIn('resolve_camera_pair', source)
+        self.assertIn('/dev/v4l/by-path/*usbv2*video-index0', source)
+        self.assertIn('Configured ${MAIN} camera is unavailable; using discovered device', source)
         self.assertNotIn('rtsp://127.0.0.1:8554/${MAIN_PATH}" -i', source)
 
     def test_video_publishers_do_not_wait_for_hdmi(self) -> None:

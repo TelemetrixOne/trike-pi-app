@@ -21,7 +21,53 @@ MSW="${MS%x*}"; MSH="${MS#*x}"; PSW="${PS%x*}"; PSH="${PS#*x}"
 MF="$(cam "$MAIN" output_framerate 25)"; PF="$(cam "$PIP" output_framerate 25)"; MB="$(cam "$MAIN" bitrate 700k)"; PB="$(cam "$PIP" bitrate 700k)"
 MG="$(cam "$MAIN" gop 25)"; PG="$(cam "$PIP" gop 25)"; MR="$(rotation_filter "$(cam "$MAIN" rotation none)")"; PR="$(rotation_filter "$(cam "$PIP" rotation none)")"
 [[ -n "$MD" && -n "$PD" && "$MD" != "$PD" ]] || { echo 'Cameras need distinct stable device paths' >&2; exit 10; }
-for d in "$MD" "$PD"; do while [[ ! -e "$d" ]]; do echo "Waiting for $d" >&2; sleep 5; done; done
+
+# USB port paths are preferred because the installed cameras expose the same
+# vendor, product and serial number. If a preferred port disappears, preserve
+# every role that is still identifiable and assign the unclaimed camera to the
+# missing role. This survives moving one camera without relying on /dev/videoN.
+resolve_camera_pair() {
+  local configured_main="$1" configured_pip="$2" main='' pip='' main_real='' pip_real='' path real
+  local -a candidates=()
+  local -A seen=()
+  if [[ -e "$configured_main" ]]; then main="$configured_main"; main_real="$(readlink -f -- "$main")"; fi
+  if [[ -e "$configured_pip" ]]; then pip="$configured_pip"; pip_real="$(readlink -f -- "$pip")"; fi
+  if [[ -n "$main_real" && "$main_real" == "$pip_real" ]]; then pip=''; pip_real=''; fi
+  shopt -s nullglob
+  for path in /dev/v4l/by-path/*usbv2*video-index0; do
+    real="$(readlink -f -- "$path")" || continue
+    [[ -n "${seen[$real]:-}" ]] && continue
+    seen[$real]=1; candidates+=("$path")
+  done
+  shopt -u nullglob
+  if [[ -z "$main" ]]; then
+    for path in "${candidates[@]}"; do
+      real="$(readlink -f -- "$path")"
+      [[ -n "$pip_real" && "$real" == "$pip_real" ]] && continue
+      main="$path"; main_real="$real"; break
+    done
+    [[ -z "$main" ]] || echo "Configured ${MAIN} camera is unavailable; using discovered device ${main}." >&2
+  fi
+  if [[ -z "$pip" ]]; then
+    for path in "${candidates[@]}"; do
+      real="$(readlink -f -- "$path")"
+      [[ -n "$main_real" && "$real" == "$main_real" ]] && continue
+      pip="$path"; pip_real="$real"; break
+    done
+    [[ -z "$pip" ]] || echo "Configured ${PIP} camera is unavailable; using discovered device ${pip}." >&2
+  fi
+  [[ -n "$main" && -n "$pip" ]] || return 1
+  printf '%s\n%s\n' "$main" "$pip"
+}
+while true; do
+  if RESOLVED="$(resolve_camera_pair "$MD" "$PD")"; then
+    mapfile -t CAMERA_DEVICES <<<"$RESOLVED"
+    MD="${CAMERA_DEVICES[0]}"; PD="${CAMERA_DEVICES[1]}"
+    break
+  fi
+  echo "Waiting for two distinct USB cameras (configured: ${MD}, ${PD})" >&2
+  sleep 5
+done
 
 # Build a correctly oriented landscape frame first. Scale-to-fill then removes
 # only the destination-aspect edges needed for HDMI or the web stream.
