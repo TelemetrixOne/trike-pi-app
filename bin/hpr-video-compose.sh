@@ -26,13 +26,14 @@ MG="$(cam "$MAIN" gop 25)"; PG="$(cam "$PIP" gop 25)"; MR="$(rotation_filter "$(
 # vendor, product and serial number. If a preferred port disappears, preserve
 # every role that is still identifiable and assign the unclaimed camera to the
 # missing role. This survives moving one camera without relying on /dev/videoN.
-resolve_camera_pair() {
-  local configured_main="$1" configured_pip="$2" main='' pip='' main_real='' pip_real='' path real
+resolve_cameras() {
+  local configured_main="$1" configured_pip="$2" main_real='' pip_real='' path real
   local -a candidates=()
   local -A seen=()
-  if [[ -e "$configured_main" ]]; then main="$configured_main"; main_real="$(readlink -f -- "$main")"; fi
-  if [[ -e "$configured_pip" ]]; then pip="$configured_pip"; pip_real="$(readlink -f -- "$pip")"; fi
-  if [[ -n "$main_real" && "$main_real" == "$pip_real" ]]; then pip=''; pip_real=''; fi
+  MD=''; PD=''
+  if [[ -e "$configured_main" ]]; then MD="$configured_main"; main_real="$(readlink -f -- "$MD")"; fi
+  if [[ -e "$configured_pip" ]]; then PD="$configured_pip"; pip_real="$(readlink -f -- "$PD")"; fi
+  if [[ -n "$main_real" && "$main_real" == "$pip_real" ]]; then PD=''; pip_real=''; fi
   shopt -s nullglob
   for path in /dev/v4l/by-path/*usbv2*video-index0; do
     real="$(readlink -f -- "$path")" || continue
@@ -40,62 +41,90 @@ resolve_camera_pair() {
     seen[$real]=1; candidates+=("$path")
   done
   shopt -u nullglob
-  if [[ -z "$main" ]]; then
+  if [[ -z "$MD" ]]; then
     for path in "${candidates[@]}"; do
       real="$(readlink -f -- "$path")"
       [[ -n "$pip_real" && "$real" == "$pip_real" ]] && continue
-      main="$path"; main_real="$real"; break
+      MD="$path"; main_real="$real"; break
     done
-    [[ -z "$main" ]] || echo "Configured ${MAIN} camera is unavailable; using discovered device ${main}." >&2
+    [[ -z "$MD" ]] || echo "Configured ${MAIN} camera is unavailable; using discovered device ${MD}." >&2
   fi
-  if [[ -z "$pip" ]]; then
+  if [[ -z "$PD" ]]; then
     for path in "${candidates[@]}"; do
       real="$(readlink -f -- "$path")"
       [[ -n "$main_real" && "$real" == "$main_real" ]] && continue
-      pip="$path"; pip_real="$real"; break
+      PD="$path"; pip_real="$real"; break
     done
-    [[ -z "$pip" ]] || echo "Configured ${PIP} camera is unavailable; using discovered device ${pip}." >&2
+    [[ -z "$PD" ]] || echo "Configured ${PIP} camera is unavailable; using discovered device ${PD}." >&2
   fi
-  [[ -n "$main" && -n "$pip" ]] || return 1
-  printf '%s\n%s\n' "$main" "$pip"
 }
-while true; do
-  if RESOLVED="$(resolve_camera_pair "$MD" "$PD")"; then
-    mapfile -t CAMERA_DEVICES <<<"$RESOLVED"
-    MD="${CAMERA_DEVICES[0]}"; PD="${CAMERA_DEVICES[1]}"
-    break
-  fi
-  echo "Waiting for two distinct USB cameras (configured: ${MD}, ${PD})" >&2
-  sleep 5
-done
+CONFIGURED_MD="$MD"; CONFIGURED_PD="$PD"
+while true; do resolve_cameras "$CONFIGURED_MD" "$CONFIGURED_PD"; [[ -n "$MD" || -n "$PD" ]] && break; echo 'Waiting for any USB camera' >&2; sleep 5; done
+
+hdmi_connected() {
+  local connector
+  [[ -e "$DISPLAY_DEVICE" ]] || return 1
+  shopt -s nullglob
+  for connector in /sys/class/drm/card*-HDMI-A-*/status; do
+    [[ "$(<"$connector")" == connected ]] && { shopt -u nullglob; return 0; }
+  done
+  shopt -u nullglob
+  return 1
+}
 
 # Build a correctly oriented landscape frame first. Scale-to-fill then removes
 # only the destination-aspect edges needed for HDMI or the web stream.
-DISPLAY_OUTPUT=()
-if [[ -e "$DISPLAY_DEVICE" ]]; then
+INPUTS=(); DISPLAY_OUTPUT=(); FRONT_OUTPUT=(); REAR_OUTPUT=(); MAIN_INDEX=''; PIP_INDEX=''; NEXT_INDEX=0
+if [[ -n "$MD" ]]; then
+  MAIN_INDEX="$NEXT_INDEX"; NEXT_INDEX=$((NEXT_INDEX+1))
+  INPUTS+=(-thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$MD")
+fi
+if [[ -n "$PD" ]]; then
+  PIP_INDEX="$NEXT_INDEX"; NEXT_INDEX=$((NEXT_INDEX+1))
+  INPUTS+=(-thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$PD")
+fi
+
+if hdmi_connected; then
   FB_NAME="$(basename "$DISPLAY_DEVICE")"
   FB_SIZE_PATH="/sys/class/graphics/${FB_NAME}/virtual_size"
   DS="$(tr ',' 'x' <"$FB_SIZE_PATH")"; [[ "$DS" =~ ^[0-9]+x[0-9]+$ ]] || exit 12
   DW="${DS%x*}"; DH="${DS#*x}"; PW=$((DW*PIP_PC/100)); PH=$((PW*9/16))
-  F="[0:v]split=2[mn0][md0];[1:v]split=2[pn0][pd0];"
-  F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
-  F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
-  F+="[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
-  F+="[pd0]${PR}scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
-  # The rider view follows the front camera clock. A stopped rear camera must not
-  # terminate the display, and only the most recent rear frame is repeated.
-  F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[display]"
+  if [[ -n "$MAIN_INDEX" && -n "$PIP_INDEX" ]]; then
+    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[${PIP_INDEX}:v]split=2[pn0][pd0];"
+    F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
+    F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+    F+="[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
+    F+="[pd0]${PR}scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
+    F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[display]"
+  elif [[ -n "$MAIN_INDEX" ]]; then
+    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[display]"
+  else
+    F="[${PIP_INDEX}:v]split=2[pn0][pd0];[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];[pd0]${PR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[display]"
+  fi
   DISPLAY_OUTPUT=(-map '[display]' -c:v rawvideo -pix_fmt "$PIXEL_FORMAT" -f fbdev "$DISPLAY_DEVICE")
-  echo "Low-latency framebuffer compositor: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; PiP ${PW}x${PH}; input queues ${INPUT_QUEUE_SIZE}." >&2
+  echo "HDMI-priority mode: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; input queues ${INPUT_QUEUE_SIZE}." >&2
 else
-  F="[0:v]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
-  F+="[1:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn]"
-  echo "Display device ${DISPLAY_DEVICE} is unavailable; publishing front and rear streams without HDMI output." >&2
+  F=''
+  [[ -z "$MAIN_INDEX" ]] || F+="[${MAIN_INDEX}:v]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
+  [[ -z "$PIP_INDEX" ]] || F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+  F="${F%;}"
+  echo "Streaming-priority mode: HDMI is disconnected or ${DISPLAY_DEVICE} is unavailable." >&2
 fi
-exec /usr/bin/ffmpeg -hide_banner -nostdin -fflags nobuffer -flags low_delay \
-  -thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$MD" \
-  -thread_queue_size "$INPUT_QUEUE_SIZE" -f v4l2 -input_format mjpeg -video_size "$CAPTURE_SIZE" -framerate "$CAPTURE_FPS" -i "$PD" \
+[[ -z "$MAIN_INDEX" ]] || FRONT_OUTPUT=(-map '[mn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$MB" -maxrate "$MB" -bufsize 140k -g "$MG" -keyint_min "$MG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$MP")
+[[ -z "$PIP_INDEX" ]] || REAR_OUTPUT=(-map '[pn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$PB" -maxrate "$PB" -bufsize 140k -g "$PG" -keyint_min "$PG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PP")
+
+/usr/bin/ffmpeg -hide_banner -nostdin -fflags nobuffer -flags low_delay "${INPUTS[@]}" \
   -filter_complex_threads 4 -filter_complex "$F" -an \
-  -map '[mn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$MB" -maxrate "$MB" -bufsize 140k -g "$MG" -keyint_min "$MG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$MP" \
-  -map '[pn]' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -b:v "$PB" -maxrate "$PB" -bufsize 140k -g "$PG" -keyint_min "$PG" -sc_threshold 0 -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PP" \
-  "${DISPLAY_OUTPUT[@]}"
+  "${DISPLAY_OUTPUT[@]}" "${FRONT_OUTPUT[@]}" "${REAR_OUTPUT[@]}" &
+FFMPEG_PID=$!
+INITIAL_HARDWARE="$(find /dev/v4l/by-path -maxdepth 1 -type l -name '*usbv2*video-index0' -printf '%l\n' 2>/dev/null | sort; grep -h . /sys/class/drm/card*-HDMI-A-*/status 2>/dev/null || true)"
+(
+  while sleep 2; do
+    CURRENT_HARDWARE="$(find /dev/v4l/by-path -maxdepth 1 -type l -name '*usbv2*video-index0' -printf '%l\n' 2>/dev/null | sort; grep -h . /sys/class/drm/card*-HDMI-A-*/status 2>/dev/null || true)"
+    [[ "$CURRENT_HARDWARE" == "$INITIAL_HARDWARE" ]] || { echo 'Camera or HDMI state changed; rebuilding video mode.' >&2; kill -TERM "$FFMPEG_PID" 2>/dev/null || true; exit; }
+  done
+) &
+WATCHER_PID=$!
+set +e; wait "$FFMPEG_PID"; STATUS=$?; set -e
+kill "$WATCHER_PID" 2>/dev/null || true; wait "$WATCHER_PID" 2>/dev/null || true
+exit "$STATUS"
