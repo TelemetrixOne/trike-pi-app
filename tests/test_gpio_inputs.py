@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import Mock
 
 from gpiozero import Device
+from gpiozero import OutputDevice
 from gpiozero.pins.mock import MockFactory
 
 from hpr_gateway.services import gpio_control
@@ -28,6 +29,23 @@ class GpioInputTests(unittest.TestCase):
             self.assertEqual(self.service._sense_input_state(runtime), "ON")
             button.pin.drive_high()
             self.assertEqual(self.service._sense_input_state(runtime), "OFF")
+
+    def test_gpio_evidence_reads_pins_without_actuating_them(self):
+        output = OutputDevice(17, initial_value=False)
+        self.service._circuits = {"trike1:headlight": Mock(output=output, effective_state="OFF",
+            switch=None, switch_on=None, switch_auto=None)}
+        self.service._sense_inputs = {}
+        self.service._drs = None
+        self.service._drs_lock = __import__("threading").RLock()
+        try:
+            evidence = self.service._gpio_evidence()
+            self.assertEqual(evidence["device"], "online")
+            self.assertEqual(output.value, 0)
+            self.service._circuits["trike1:headlight"].effective_state = "ON"
+            self.assertIn("trike1:headlight:output_readback_mismatch", self.service._gpio_evidence()["errors"])
+            self.assertEqual(output.value, 0)
+        finally:
+            output.close()
 
     def test_feedback_divider_is_floating_and_active_high(self):
         config = SenseInputConfig("trike1", "headlamp", "Headlamp feedback", "", 27, None, True)

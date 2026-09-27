@@ -76,6 +76,7 @@ def configure(config: HprConfig) -> None:
         "client_id": f"{config.trike_id}_control_gateway",
         "discovery_prefix": str(service.get("discovery_prefix", "homeassistant")),
         "topic_root": config.topic_root,
+        "gpio_evidence_topic": f"{config.resolve_topic(config.get('health.base_topic'), 'pi')}/gpio_evidence",
         "qos": int(service.get("qos", 1)),
         "retain_state": bool(service.get("retain_state", True)),
         "retain_discovery": bool(service.get("retain_discovery", True)),
@@ -573,6 +574,7 @@ class GPIOControlService:
         self._sense_inputs: Dict[str, SenseInputRuntime] = {}
         self._drs: Optional[DRSRuntime] = None
         self._drs_lock = threading.RLock()
+        self._mqtt_connected = False
         self._telemetry = TelemetryMonitor(self._client, self._publish)
         self._configure_gpio()
         self._configure_sense_inputs()
@@ -1005,6 +1007,49 @@ class GPIOControlService:
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/mode", self._drs.mode)
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
 
+    def _gpio_evidence(self) -> dict:
+        """Read GPIO without changing outputs. This does not prove external loads moved."""
+        errors = []
+        output_count = input_count = 0
+        for key, runtime in self._circuits.items():
+            output_count += 1
+            try:
+                expected = runtime.effective_state == STATE_ON
+                if bool(runtime.output.value) != expected:
+                    errors.append(f"{key}:output_readback_mismatch")
+                for switch in (runtime.switch, runtime.switch_on, runtime.switch_auto):
+                    if switch is not None:
+                        input_count += 1
+                        _ = switch.is_pressed
+            except Exception as exc:
+                errors.append(f"{key}:{type(exc).__name__}")
+        for key, runtime in self._sense_inputs.items():
+            input_count += 1
+            try:
+                _ = runtime.button.is_pressed
+            except Exception as exc:
+                errors.append(f"{key}:{type(exc).__name__}")
+        with self._drs_lock:
+            if self._drs is not None:
+                try:
+                    if self._drs.output is not None:
+                        output_count += 1
+                        expected = self._servo_duty(self._drs.current_pulse_us, self._drs.frequency_hz)
+                        if abs(self._drs.output.value - expected) > 0.005:
+                            errors.append("drs:pwm_readback_mismatch")
+                except Exception as exc:
+                    errors.append(f"drs:{type(exc).__name__}")
+        if output_count == 0:
+            errors.append("no_gpio_outputs_configured")
+        return {"schema": "hpr.gpio_evidence.v1", "outputs_checked": output_count,
+                "inputs_checked": input_count, "errors": errors,
+                "device": "online" if not errors else "failed",
+                "reason": "gpio_pin_readbacks_match" if not errors else "gpio_pin_readback_failed"}
+
+    def _publish_gpio_evidence(self) -> None:
+        if self._mqtt_connected:
+            self._publish(MQTT["gpio_evidence_topic"], json.dumps(self._gpio_evidence()), retain=False)
+
     def _discovery_topic(self, component: str, object_id: str) -> str:
         return f"{MQTT['discovery_prefix']}/{component}/{object_id}/config"
 
@@ -1099,6 +1144,9 @@ class GPIOControlService:
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         LOG.info("MQTT connected: rc=%s", reason_code)
+        self._mqtt_connected = not (reason_code.is_failure if hasattr(reason_code, "is_failure") else reason_code != 0)
+        if not self._mqtt_connected:
+            return
         for runtime in self._circuits.values():
             base = self._base_topic(runtime.config.trike, runtime.config.name)
             client.subscribe(f"{base}/set", qos=MQTT["qos"])
@@ -1110,6 +1158,7 @@ class GPIOControlService:
             self._publish_all_states()
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
+        self._mqtt_connected = False
         LOG.warning("MQTT disconnected: rc=%s", reason_code)
 
     def _on_message(self, client, userdata, msg) -> None:
@@ -1155,8 +1204,13 @@ class GPIOControlService:
         self._client.loop_start()
         self._publish_all_states()
         self._telemetry.start()
+        next_gpio_evidence = 0.0
         try:
             while not self._stop:
+                now = time.monotonic()
+                if now >= next_gpio_evidence:
+                    self._publish_gpio_evidence()
+                    next_gpio_evidence = now + 5.0
                 self._telemetry.tick()
                 self._handle_remote_pulse_expiry()
                 self._release_drs_if_due()

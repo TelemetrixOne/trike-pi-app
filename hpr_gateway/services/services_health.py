@@ -70,6 +70,32 @@ def age_seconds(received: float | None) -> float | None:
     return round(time.monotonic() - received, 1) if received is not None else None
 
 
+def gpio_health_detail(process: str, evidence: object, age: float | None,
+                       max_age: float, trike_id: str) -> dict:
+    """Require fresh, independently received pin evidence, not just a live process."""
+    valid = isinstance(evidence, dict) and evidence.get("schema") == "hpr.gpio_evidence.v1"
+    fresh = valid and age is not None and age <= max_age
+    errors = evidence.get("errors") if valid else None
+    checked = evidence.get("outputs_checked") if valid else None
+    pins_ok = fresh and isinstance(errors, list) and not errors and isinstance(checked, int) and checked > 0
+    if process != "Good":
+        overall, reason = process, "gpio_service_not_running"
+    elif not fresh:
+        overall, reason = "Failed", "gpio_pin_evidence_missing_or_stale"
+    elif not pins_ok:
+        overall, reason = "Failed", "gpio_pin_readback_failed"
+    else:
+        overall, reason = "Good", "gpio_pin_readbacks_match"
+    return {"schema": "hpr.service_health.v2", "trike_id": trike_id,
+            "service": "gpio", "process": "running" if process == "Good" else process.lower(),
+            "device": "online" if pins_ok else "failed", "data": "fresh" if fresh else "stale",
+            "overall": overall, "reason": reason, "expected": True,
+            "evidence_age_seconds": age, "outputs_checked": checked,
+            "inputs_checked": evidence.get("inputs_checked") if valid else None,
+            "errors": errors, "scope": "pi_gpio_pin_readback_not_external_load_feedback",
+            "observed_at": datetime.now(timezone.utc).isoformat()}
+
+
 def sensor_overall(process: str, race_enabled: bool, good: bool, waiting: bool = False) -> str:
     if process != "Good":
         return process
@@ -120,6 +146,8 @@ def main() -> int:
         for name, sensor in enabled_items(config.get("tpms.sensors", {}))
     }
     tpms_assignment_topic = f"hpr/{config.trike_id}/config/tpms_assignments"
+    gpio_evidence_topic = f"{base_topic}/gpio_evidence"
+    gpio_max_age = max(15.0, interval * 3)
     tpms_fresh_seconds = float(config.get("services.tpms.stale_seconds", 300)) + interval
     pedal_devices = list(enabled_items(config.get("power_cadence.devices", {})))
     pedal_status_topics = [
@@ -133,6 +161,7 @@ def main() -> int:
         hr_status_topic,
         hr_data_topic,
         tpms_assignment_topic,
+        gpio_evidence_topic,
         *tpms_topics_by_name.values(),
         *pedal_status_topics,
         *pedal_data_topics,
@@ -155,7 +184,13 @@ def main() -> int:
             process = service_health(unit)
             race_value, _ = statuses.get(race_mode_topic)
             race_enabled = str(race_value or "OFF").upper() == "ON"
-            if topic_suffix == "gps_health":
+            if topic_suffix == "gpio_health":
+                evidence, received = statuses.get(gpio_evidence_topic)
+                detail = gpio_health_detail(process, evidence, age_seconds(received),
+                                            gpio_max_age, config.trike_id)
+                client.publish(topic, payload=detail["overall"], qos=1, retain=True)
+                client.publish(f"{base_topic}/gpio_detail", payload=encode_payload(detail), qos=1, retain=True)
+            elif topic_suffix == "gps_health":
                 source, received = statuses.get(gps_status_topic)
                 device = state_from(source)
                 source_reason = reason_from(source)
