@@ -37,7 +37,7 @@ def rotation(camera):
 
 def jpeg_caps(size, fps):
     width, height = dimensions(size)
-    return f'image/jpeg,width={width},height={height},framerate={int(fps)}/1'
+    return f'image/jpeg,width={width},height={height},framerate={int(fps)}/1,pixel-aspect-ratio=1/1'
 
 
 def capture_pipeline(device, socket, size, fps, display_socket=None):
