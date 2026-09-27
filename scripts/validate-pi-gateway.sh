@@ -29,7 +29,9 @@ cfg() {
 
 check_unit() {
   local unit="$1"
-  if ! systemctl list-unit-files "${unit}" --no-pager --plain 2>/dev/null | grep -q "${unit}"; then
+  # Avoid grep -q under pipefail: systemctl can receive SIGPIPE after an early
+  # match, intermittently reporting an installed unit as missing.
+  if [ "$(systemctl show "${unit}" -p LoadState --value 2>/dev/null)" != loaded ]; then
     fail "unit:${unit}" "not installed"
     return
   fi
