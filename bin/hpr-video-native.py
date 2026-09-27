@@ -63,7 +63,7 @@ def display_pipeline(socket, size, fps, camera, mode):
             '! videoscale add-borders=true ! videoconvert ! '
             f'video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,format=BGRA ! '
             'kmssink name=progress driver-name=vc4 '
-            f'connector-id={connector} sync=false async=false processing-deadline=0 '
+            f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
             'force-modesetting=false enable-last-sample=false')
 
 
