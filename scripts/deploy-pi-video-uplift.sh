@@ -16,6 +16,7 @@ fi
 for required in \
   bin/hpr-video-publish.sh \
   bin/hpr-video-compose.sh \
+  bin/hpr-video-compose-gst.sh \
   hpr_gateway/config.py \
   hpr_gateway/services/trike_config_sync.py \
   scripts/validate-pi-gateway.sh
@@ -28,13 +29,16 @@ done
 
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
+bash -n "${REPO_ROOT}/bin/hpr-video-compose-gst.sh"
 install -d -m 0700 "${BACKUP_ROOT}"
 cp -a "${CONFIG_PATH}" "${BACKUP_ROOT}/hpr.yaml"
 for relative in \
   bin/hpr-video-publish.sh \
   bin/hpr-video-compose.sh \
+  bin/hpr-video-compose-gst.sh \
   runtime/video/hpr-video-publish.sh \
   runtime/video/hpr-video-compose.sh \
+  runtime/video/hpr-video-compose-gst.sh \
   hpr_gateway/config.py \
   hpr_gateway/services/trike_config_sync.py \
   scripts/validate-pi-gateway.sh
@@ -52,6 +56,8 @@ install -m 0755 "${REPO_ROOT}/bin/hpr-video-publish.sh" "${INSTALL_ROOT}/bin/hpr
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-publish.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-publish.sh"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose.sh" "${INSTALL_ROOT}/bin/hpr-video-compose.sh"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-compose.sh"
+install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose-gst.sh" "${INSTALL_ROOT}/bin/hpr-video-compose-gst.sh"
+install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose-gst.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/config.py" "${INSTALL_ROOT}/hpr_gateway/config.py"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/services/trike_config_sync.py" \
   "${INSTALL_ROOT}/hpr_gateway/services/trike_config_sync.py"

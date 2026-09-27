@@ -439,6 +439,7 @@ configure_video() {
   install -m 0755 "${binary_source}" "${video_root}/mediamtx"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-publish.sh" "${video_root}/hpr-video-publish.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose.sh" "${video_root}/hpr-video-compose.sh"
+  install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose-gst.sh" "${video_root}/hpr-video-compose-gst.sh"
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml

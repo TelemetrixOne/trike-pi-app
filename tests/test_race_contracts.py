@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TRIKE1_CONFIG = ROOT / "config" / "hpr.example.yaml"
 MEDIAMTX = ROOT / "vendor" / "mediamtx" / "linux_arm64" / "mediamtx"
 COMPOSITOR = ROOT / "bin" / "hpr-video-compose.sh"
+KMS_COMPOSITOR = ROOT / "bin" / "hpr-video-compose-gst.sh"
 
 
 class RaceContractTests(unittest.TestCase):
@@ -74,6 +75,22 @@ class RaceContractTests(unittest.TestCase):
         self.assertIn('Streaming-priority mode', source)
         self.assertIn('DISPLAY_OUTPUT=()', source)
         self.assertIn('"${DISPLAY_OUTPUT[@]}"', source)
+
+    def test_low_latency_hdmi_has_isolated_stream_publishers_and_fallback(self) -> None:
+        wrapper = COMPOSITOR.read_text(encoding="utf-8")
+        kms = KMS_COMPOSITOR.read_text(encoding="utf-8")
+        self.assertIn('"$GST_COMPOSITOR"', wrapper)
+        self.assertIn('restoring FFmpeg HDMI and streams', wrapper)
+        self.assertIn('v4l2jpegdec', kms)
+        self.assertIn('kmssink', kms)
+        self.assertIn('sync=false force-modesetting=false', kms)
+        self.assertIn('leaky=downstream', kms)
+        self.assertIn('shmsink', kms)
+        self.assertIn('shmsrc', kms)
+        self.assertIn('rtspclientsink', kms)
+        self.assertIn('video-direction=${direction}', kms)
+        self.assertIn('sizing-policy=keep-aspect-ratio', kms)
+        self.assertIn('Camera or HDMI state changed; rebuilding video mode.', kms)
 
     def test_packaged_mediamtx_checksum(self) -> None:
         config = yaml.safe_load(TRIKE1_CONFIG.read_text(encoding="utf-8"))

@@ -72,6 +72,21 @@ hdmi_connected() {
   return 1
 }
 
+# Prefer direct KMS scanout and independent, lossy streaming publishers when
+# HDMI is present. The proven FFmpeg path remains an automatic fallback and
+# continues to serve streams when no HDMI monitor is connected.
+if hdmi_connected && command -v gst-launch-1.0 >/dev/null 2>&1 && command -v kmsprint >/dev/null 2>&1; then
+  GST_COMPOSITOR="${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
+  if [[ -x "$GST_COMPOSITOR" ]]; then
+    set +e
+    HPR_MAIN_DEVICE="$MD" HPR_PIP_DEVICE="$PD" "$GST_COMPOSITOR"
+    GST_STATUS=$?
+    set -e
+    [[ "$GST_STATUS" -ne 75 ]] || exit 75
+    echo "Low-latency KMS path stopped (${GST_STATUS}); restoring FFmpeg HDMI and streams." >&2
+  fi
+fi
+
 # Build a correctly oriented landscape frame first. HDMI preserves the whole
 # frame; the independently configured web streams retain their existing layout.
 INPUTS=(); DISPLAY_OUTPUT=(); FRONT_OUTPUT=(); REAR_OUTPUT=(); MAIN_INDEX=''; PIP_INDEX=''; NEXT_INDEX=0
