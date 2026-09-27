@@ -66,7 +66,7 @@ PIPELINE=(/usr/bin/gst-launch-1.0 -q -e compositor name=mix background=black for
 if [[ -n "$MD" && -n "$PD" ]]; then
   PIPELINE+=("sink_1::xpos=${PX}" "sink_1::ypos=${PY}" "sink_1::width=${PW}" "sink_1::height=${PH}" sink_1::sizing-policy=keep-aspect-ratio)
 fi
-PIPELINE+=('!' "video/x-raw,width=${DW},height=${DH},framerate=${CAPTURE_FPS}/1" '!' videoconvert '!' kmssink
+PIPELINE+=('!' "video/x-raw,width=${DW},height=${DH},framerate=${CAPTURE_FPS}/1,format=BGRA" '!' videoconvert '!' kmssink
   driver-name=vc4 "connector-id=${CONNECTOR_ID}" sync=false force-modesetting=false enable-last-sample=false)
 
 add_camera() {
@@ -74,7 +74,9 @@ add_camera() {
   direction="$(orientation "$(cam "$name" rotation none)")"
   PIPELINE+=(v4l2src "device=${device}" io-mode=mmap do-timestamp=true '!' "image/jpeg,width=${CW},height=${CH},framerate=${CAPTURE_FPS}/1"
     '!' tee "name=${name}tee" "${name}tee." '!' queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream
-    '!' v4l2jpegdec '!' videoconvert '!' videoflip "video-direction=${direction}"
+    # bcm2835-codec's MJPEG decoder can fail to initialise after a warm boot,
+    # leaving a black main view while the RTSP/software-decoded image works.
+    '!' jpegdec '!' videoconvert '!' videoflip "video-direction=${direction}"
     '!' queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream '!' "mix.${sink}"
     "${name}tee." '!' queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream
     '!' shmsink "socket-path=${socket}" shm-size=8388608 wait-for-connection=false sync=false enable-last-sample=false)
@@ -85,7 +87,7 @@ if [[ -n "$PD" ]]; then
   else add_camera "$PIP" "$PD" "$REAR_SOCKET" sink_0; fi
 fi
 
-echo "Low-latency HDMI: MJPEG ${CAPTURE_SIZE}@${CAPTURE_FPS}, KMS ${MODE}, PiP ${PW}x${PH}; streams isolated by leaky MJPEG queues." >&2
+echo "Low-latency HDMI: software MJPEG ${CAPTURE_SIZE}@${CAPTURE_FPS}, direct KMS ${MODE}, PiP ${PW}x${PH}; streams isolated by leaky MJPEG queues." >&2
 "${PIPELINE[@]}" & CAPTURE_PID=$!
 
 publish() {
