@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 import yaml
 
@@ -95,6 +95,20 @@ class TrikeConfigSyncTests(unittest.TestCase):
             ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
 
         systemd.apply.assert_called_once_with("hpr-video-front.service", True)
+
+        # A native installation retains shared service ownership even when
+        # the central profile has no PiP setting. Never start a second USB owner.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hpr.yaml"
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+            systemd = Mock()
+            with patch.object(Path, "is_file", return_value=True):
+                ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
+        self.assertEqual(systemd.apply.call_args_list, [
+            call("hpr-video-front.service", False),
+            call("hpr-video-rear.service", False),
+            call("hpr-video-compositor.service", True),
+        ])
 
     def test_enabling_pip_switches_to_direct_compositor(self):
         data = self._valid_config()

@@ -173,6 +173,11 @@ from pathlib import Path
 s = json.loads(Path('/run/hpr-video/video-status.json').read_text())
 assert time.monotonic() - s['at'] < 8, 'supervisor stale'
 assert s['children'], 'no cameras available'
+for role in ('front', 'rear'):
+    if role + '-capture' in s['children']:
+        assert role + '-publish' in s['children'], role + ' publisher missing'
+if s.get('display_mode') and 'front-capture' in s['children']:
+    assert 'hdmi' in s['children'], 'connected HDMI viewer missing'
 for name, child in s['children'].items():
     assert time.monotonic() - child.get('at', 0) < 8, name
 PY
@@ -196,8 +201,8 @@ PY
       check_unit hpr-video-compositor.service
       compositor_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
       grep -q 'hpr-video-compose.sh' <<<"${compositor_text}" \
-        && pass hdmi-pip-direct "local V4L2 compositor" \
-        || fail hdmi-pip-direct "compositor unit is not direct-camera configured"
+        && pass hdmi-direct "local camera viewer service" \
+        || fail hdmi-direct "viewer unit is not direct-camera configured"
     elif [ "$(cfg "video.cameras.${display_camera}.enabled" --default false)" = "true" ]; then
       pass hdmi-display "direct USB output integrated with hpr-video-${display_camera}.service"
     else
@@ -207,9 +212,15 @@ PY
     [ -e "${display_device}" ] \
       && pass hdmi-framebuffer "${display_device}" \
       || fail hdmi-framebuffer "display device is unavailable: ${display_device}"
-    /usr/bin/ffmpeg -hide_banner -devices 2>/dev/null | grep -q 'fbdev' \
-      && pass hdmi-display-driver "FFmpeg framebuffer output available" \
-      || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
+    if [ "${native_video}" = "true" ]; then
+      gst-inspect-1.0 kmssink >/dev/null 2>&1 \
+        && pass hdmi-display-driver "native KMS output available" \
+        || fail hdmi-display-driver "native KMS output unavailable"
+    else
+      /usr/bin/ffmpeg -hide_banner -devices 2>/dev/null | grep -q 'fbdev' \
+        && pass hdmi-display-driver "FFmpeg framebuffer output available" \
+        || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
+    fi
     check_unit hpr-video-console.service
     if [ "${pip_enabled}" = "true" ]; then
       display_unit_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
