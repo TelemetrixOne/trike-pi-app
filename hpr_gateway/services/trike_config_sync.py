@@ -143,7 +143,16 @@ class ProfileApplier:
                 and video_enabled == current.enabled("video")
             )
             pip_enabled = bool(video_target.get("display", {}).get("picture_in_picture", {}).get("enabled"))
-            if rotation_only and not pip_enabled:
+            native_video = (Path(__file__).resolve().parents[2] / "runtime/video/hpr-video-native.py").is_file()
+            if native_video:
+                # The supervisor owns both publishers with or without HDMI.
+                # Retired PiP settings must not resurrect competing USB owners.
+                if video_enabled != current.enabled("video"):
+                    changed_units["hpr-video-mediamtx.service"] = video_enabled
+                for camera_name in video_target.get("cameras", {}):
+                    changed_units[f"hpr-video-{camera_name}.service"] = False
+                changed_units["hpr-video-compositor.service"] = video_enabled
+            elif rotation_only and not pip_enabled:
                 for camera_name in rotation_changed:
                     camera = video_target.get("cameras", {}).get(camera_name, {})
                     changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))

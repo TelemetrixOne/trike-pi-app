@@ -3,6 +3,11 @@ set -euo pipefail
 CONFIG_PATH="${HPR_CONFIG_PATH:-/etc/hpr/hpr.yaml}"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 PYTHON="${INSTALL_ROOT}/venv/bin/python"
+# Independent camera/stream/display workers handle HDMI hotplug themselves.
+# Keep the legacy path below as a source-controlled rollback option.
+if [[ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ]]; then
+  exec "${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
+fi
 cfg() { PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" -m hpr_gateway.config_value --config "${CONFIG_PATH}" "$@"; }
 cam() { cfg "video.cameras.${1}.${2}" --default "${3}"; }
 rotation_filter() {
@@ -128,13 +133,10 @@ if hdmi_connected; then
   PIP_FIT="scale=${PW}:${PH}:force_original_aspect_ratio=decrease,pad=${PW}:${PH}:(ow-iw)/2:(oh-ih)/2,setsar=1"
   FRAMEBUFFER_PAD=""; [[ "$VS" == "$DS" ]] || FRAMEBUFFER_PAD=",pad=${DW}:${DH}:0:0"
   if [[ -n "$MAIN_INDEX" && -n "$PIP_INDEX" ]]; then
-    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[${PIP_INDEX}:v]split=2[pn0][pd0];"
+    F="[${MAIN_INDEX}:v]split=2[mn0][md0];"
     F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
-    F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
-    F+="[md0]${MR}${HDMI_FIT}[base];"
-    F+="[pd0]${PR}${PIP_FIT}[inset];"
-    F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[monitor];"
-    F+="[monitor]null${FRAMEBUFFER_PAD}[display]"
+    F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+    F+="[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   elif [[ -n "$MAIN_INDEX" ]]; then
     F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   else

@@ -162,6 +162,21 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
   fi
   check_video_boot_policy hpr-video-mediamtx.service local-fs.target
   pip_enabled="$(cfg video.display.picture_in_picture.enabled --default false)"
+  native_video=false
+  if [ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ]; then
+    native_video=true
+    pip_enabled=true # shared service ownership, not a PiP capability
+    check_unit hpr-video-compositor.service
+    /usr/bin/python3 - <<'PY' && pass video-progress "all available workers advancing" || fail video-progress "worker frame progress missing or stale"
+import json, time
+from pathlib import Path
+s = json.loads(Path('/run/hpr-video/video-status.json').read_text())
+assert time.monotonic() - s['at'] < 8, 'supervisor stale'
+assert s['children'], 'no cameras available'
+for name, child in s['children'].items():
+    assert time.monotonic() - child.get('at', 0) < 8, name
+PY
+  fi
   for camera in front rear; do
     if [ "$(cfg "video.cameras.${camera}.enabled" --default false)" = "true" ]; then
       device="$(cfg "video.cameras.${camera}.device" --default '')"
@@ -177,7 +192,7 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
   if [ "$(cfg video.display.enabled --default false)" = "true" ]; then
     display_camera="$(cfg video.display.camera --default front)"
     if [ "${pip_enabled}" = "true" ]; then
-      pass hdmi-display "direct dual-camera USB compositor"
+      pass hdmi-display "supervised camera service (native viewer is front-only)"
       check_unit hpr-video-compositor.service
       compositor_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
       grep -q 'hpr-video-compose.sh' <<<"${compositor_text}" \

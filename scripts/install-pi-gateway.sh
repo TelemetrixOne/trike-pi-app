@@ -136,7 +136,9 @@ if command -v apt-get >/dev/null 2>&1; then
   if [ "${INSTALL_SCOPE}" = "all" ]; then
     apt-get install -y \
       bluez bluetooth rfkill ffmpeg v4l-utils i2c-tools python3-smbus \
-      build-essential python3-dev swig
+      build-essential python3-dev swig python3-gi gir1.2-gstreamer-1.0 \
+      gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+      gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-rtsp
   fi
 fi
 
@@ -440,6 +442,7 @@ configure_video() {
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-publish.sh" "${video_root}/hpr-video-publish.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose.sh" "${video_root}/hpr-video-compose.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose-gst.sh" "${video_root}/hpr-video-compose-gst.sh"
+  install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-native.py" "${video_root}/hpr-video-native.py"
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml
@@ -555,7 +558,7 @@ EOF
 
   cat > /etc/systemd/system/hpr-video-compositor.service <<EOF
 [Unit]
-Description=HPR direct dual-camera HDMI compositor and publishers
+Description=HPR front HDMI viewer and independent camera publishers
 After=hpr-video-mediamtx.service hpr-video-console.service
 Requires=hpr-video-mediamtx.service hpr-video-console.service
 StartLimitIntervalSec=0
@@ -571,6 +574,9 @@ Environment=HPR_INSTALL_ROOT=${INSTALL_ROOT}
 ExecStart=${video_root}/hpr-video-compose.sh
 Restart=always
 RestartSec=3
+RuntimeDirectory=hpr-video
+RuntimeDirectoryMode=0750
+TimeoutStopSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -671,7 +677,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
         systemctl restart hpr-video-console.service
       fi
     fi
-    if [ "$(cfg video.display.picture_in_picture.enabled --default false)" = "true" ]; then
+    if [ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ] || [ "$(cfg video.display.picture_in_picture.enabled --default false)" = "true" ]; then
       systemctl disable --now hpr-video-front.service hpr-video-rear.service 2>/dev/null || true
       systemctl enable hpr-video-compositor.service
       if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
