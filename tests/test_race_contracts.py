@@ -88,6 +88,7 @@ class RaceContractTests(unittest.TestCase):
         self.assertIn('shmsink', kms)
         self.assertIn('shmsrc', kms)
         self.assertIn('rtspclientsink', kms)
+        self.assertIn('exec /usr/bin/nice -n 5 /usr/bin/gst-launch-1.0', kms)
         self.assertIn('video-direction=${direction}', kms)
         self.assertIn('sizing-policy=keep-aspect-ratio', kms)
         self.assertIn('Camera or HDMI state changed; rebuilding video mode.', kms)

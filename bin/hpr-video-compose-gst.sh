@@ -95,11 +95,12 @@ publish() {
   gop="$(cam "$name" gop 25)"; path="$(cam "$name" path "$name")"
   direction="$(orientation "$(cam "$name" rotation none)")"
   [[ "$stream_size" =~ ^[0-9]+x[0-9]+$ && "$fps" =~ ^[0-9]+$ && "$bitrate" =~ ^[0-9]+$ && "$gop" =~ ^[0-9]+$ ]] || return 1
-  /usr/bin/nice -n 5 /usr/bin/gst-launch-1.0 -q -e shmsrc "socket-path=${socket}" is-live=true do-timestamp=true
-    '!' "image/jpeg,width=${CW},height=${CH},framerate=${CAPTURE_FPS}/1" '!' jpegdec '!' videoflip "video-direction=${direction}"
-    '!' videoconvert '!' videoscale '!' videorate drop-only=true
-    '!' "video/x-raw,width=${sw},height=${sh},framerate=${fps}/1,format=I420"
-    '!' x264enc speed-preset=ultrafast tune=zerolatency "bitrate=${bitrate}" "key-int-max=${gop}" bframes=0
+  exec /usr/bin/nice -n 5 /usr/bin/gst-launch-1.0 -q -e \
+    shmsrc "socket-path=${socket}" is-live=true do-timestamp=true \
+    '!' "image/jpeg,width=${CW},height=${CH},framerate=${CAPTURE_FPS}/1" '!' jpegdec '!' videoflip "video-direction=${direction}" \
+    '!' videoconvert '!' videoscale '!' videorate drop-only=true \
+    '!' "video/x-raw,width=${sw},height=${sh},framerate=${fps}/1,format=I420" \
+    '!' x264enc speed-preset=ultrafast tune=zerolatency "bitrate=${bitrate}" "key-int-max=${gop}" bframes=0 \
     '!' h264parse config-interval=1 '!' rtspclientsink "location=rtsp://127.0.0.1:8554/${path}" protocols=tcp
 }
 
