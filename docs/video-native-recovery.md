@@ -6,7 +6,8 @@ decodes, applies the central rotation, fits the entire image to the active KMS
 mode and displays it. It does not consume RTSP. HDMI PiP is retired; legacy
 central PiP fields are retained for compatibility but are not rendered.
 
-Single-frame leaky queues prevent slow consumers accumulating old frames. The
+Separate shared-memory rings and single-frame leaky queues prevent a frozen
+HDMI reader pinning streaming buffers or slow consumers accumulating old frames. The
 rear camera remains streamed. HDMI hotplug restarts only the viewer. A camera
 failure restarts only that camera's capture and consumers. No HDMI and rear-only
 operation still publish whichever cameras are available. Identical USB cameras
@@ -15,8 +16,8 @@ cameras together cannot establish physical front/rear identity automatically.
 
 Workers report monotonic frame progress to `/run/hpr-video`. HDMI health uses
 completed KMS render counts, not merely frames arriving before the display.
-After a 15-second startup grace, five seconds without progress triggers bounded
-termination and restart. The external supervisor also detects a stopped or hung
+Workers get up to 15 seconds to deliver their first frames; thereafter two seconds
+without progress triggers bounded termination and restart. The external supervisor also detects a stopped or hung
 worker. `/run/hpr-video/video-status.json` records PIDs, frame counts and recovery
 counts. This detects stalled delivery, not a camera internally repeating frames
 or a faulty physical panel/cable. Physical motion and latency testing is required.

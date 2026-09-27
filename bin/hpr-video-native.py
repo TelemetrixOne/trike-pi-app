@@ -17,7 +17,7 @@ import time
 
 QUEUE = 'queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream'
 STARTUP_GRACE = 15
-STALL_TIMEOUT = 5
+STALL_TIMEOUT = 2
 
 
 def quote(value):
@@ -136,7 +136,9 @@ def read_progress(path):
 
 
 def stalled(started, progress, now):
-    return now - started > STARTUP_GRACE and now - progress.get('at', started) > STALL_TIMEOUT
+    if 'at' in progress:
+        return now - progress['at'] > STALL_TIMEOUT
+    return now - started > STARTUP_GRACE
 
 
 def worker(description, heartbeat, kind):
@@ -178,7 +180,7 @@ def worker(description, heartbeat, kind):
     bus = pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect('message', message)
-    GLib.timeout_add_seconds(1, progress)
+    GLib.timeout_add(500, progress)
     signal.signal(signal.SIGTERM, lambda *_: loop.quit())
     signal.signal(signal.SIGINT, lambda *_: loop.quit())
     pipeline.set_state(Gst.State.PLAYING)
@@ -207,7 +209,7 @@ class Child:
         if self.process.poll() is None:
             self.process.terminate()
             try:
-                self.process.wait(timeout=1)
+                self.process.wait(timeout=0.5)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=2)
@@ -238,7 +240,7 @@ def supervise(settings):
                 print(f'Recovering {name}: changed pipeline, exit or stalled frames', flush=True)
                 stop(name)
                 restarts[name] = restarts.get(name, 0) + 1
-                retry_at[name] = time.monotonic() + 1
+                retry_at[name] = time.monotonic() + 0.5
             if name not in children and time.monotonic() >= retry_at.get(name, 0):
                 children[name] = Child(name, kind, description, directory)
 
@@ -249,7 +251,7 @@ def supervise(settings):
                     device = devices.get(role)
                     try:
                         stat = os.stat(device) if device else None
-                        identity = (os.path.realpath(device), stat.st_ino, stat.st_rdev) if stat else None
+                        identity = (os.path.realpath(device), stat.st_ino, getattr(stat, 'st_rdev', 0)) if stat else None
                     except OSError:
                         identity = None
                     capture = children.get(role + '-capture')
@@ -282,7 +284,7 @@ def supervise(settings):
                     'at': time.monotonic(), 'display_mode': mode, 'pip': False,
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
                                        **read_progress(child.heartbeat)} for name, child in children.items()}})
-                time.sleep(1)
+                time.sleep(0.5)
         finally:
             for name in list(children):
                 stop(name)

@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import signal
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +17,7 @@ class NativeVideoTests(unittest.TestCase):
         self.assertTrue(video.stalled(100, {}, 116))
         self.assertFalse(video.stalled(100, {'at': 119}, 120))
         self.assertTrue(video.stalled(100, {'at': 111}, 120))
+        self.assertTrue(video.stalled(100, {'at': 102}, 105))
 
     def test_camera_move_preserves_identifiable_rear(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,6 +55,44 @@ class NativeVideoTests(unittest.TestCase):
         self.assertIn('bitrate=900', publisher)
         self.assertIn('127.0.0.1:9554/race-front', publisher)
         self.assertIn('width=640,height=360,framerate=25/1', publisher)
+
+    def test_hdmi_hotplug_does_not_restart_publishers(self):
+        started, handlers, loops = [], {}, [0]
+
+        class FakeChild:
+            def __init__(self, name, kind, description, directory):
+                started.append(name)
+                self.description = description
+                self.process = SimpleNamespace(pid=len(started))
+                self.heartbeat = directory / (name + '.json')
+                for path in video.re.findall(r'socket-path=("[^"]+")', description):
+                    Path(video.json.loads(path)).touch()
+
+            def unhealthy(self):
+                return False
+
+            def stop(self):
+                pass
+
+        def tick(seconds):
+            loops[0] += 1
+            if loops[0] == 3:
+                handlers[signal.SIGTERM]()
+
+        with tempfile.TemporaryDirectory() as directory:
+            front, rear = Path(directory) / 'front', Path(directory) / 'rear'
+            front.touch()
+            rear.touch()
+            settings = {'cameras': {'front': {'device': str(front)}, 'rear': {'device': str(rear)}}}
+            with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
+                 patch.object(video, 'Child', FakeChild), \
+                 patch.object(video.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
+                 patch.object(video.time, 'sleep', side_effect=tick), \
+                 patch.object(video, 'display_mode', side_effect=[None, (33, 800, 480), None]):
+                video.supervise(settings)
+        self.assertEqual(started.count('front-publish'), 1)
+        self.assertEqual(started.count('rear-publish'), 1)
+        self.assertEqual(started.count('hdmi'), 1)
 
 
 if __name__ == '__main__':
