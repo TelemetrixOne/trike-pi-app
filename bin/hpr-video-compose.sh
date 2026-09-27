@@ -78,12 +78,18 @@ hdmi_connected() {
 if hdmi_connected && command -v gst-launch-1.0 >/dev/null 2>&1 && command -v kmsprint >/dev/null 2>&1; then
   GST_COMPOSITOR="${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
   if [[ -x "$GST_COMPOSITOR" ]]; then
-    set +e
-    HPR_MAIN_DEVICE="$MD" HPR_PIP_DEVICE="$PD" "$GST_COMPOSITOR"
-    GST_STATUS=$?
-    set -e
-    [[ "$GST_STATUS" -ne 75 ]] || exit 75
-    echo "Low-latency KMS path stopped (${GST_STATUS}); restoring FFmpeg HDMI and streams." >&2
+    for GST_ATTEMPT in 1 2; do
+      resolve_cameras "$CONFIGURED_MD" "$CONFIGURED_PD"
+      [[ -n "$MD" || -n "$PD" ]] || break
+      set +e
+      HPR_MAIN_DEVICE="$MD" HPR_PIP_DEVICE="$PD" "$GST_COMPOSITOR"
+      GST_STATUS=$?
+      set -e
+      [[ "$GST_STATUS" -ne 75 ]] || exit 75
+      echo "Low-latency KMS path stopped (${GST_STATUS}), attempt ${GST_ATTEMPT}/2." >&2
+      [[ "$GST_ATTEMPT" -eq 2 ]] || sleep 2
+    done
+    echo 'Restoring FFmpeg HDMI and streams.' >&2
   fi
 fi
 
