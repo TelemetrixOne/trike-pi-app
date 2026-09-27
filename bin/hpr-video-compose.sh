@@ -72,8 +72,8 @@ hdmi_connected() {
   return 1
 }
 
-# Build a correctly oriented landscape frame first. Scale-to-fill then removes
-# only the destination-aspect edges needed for HDMI or the web stream.
+# Build a correctly oriented landscape frame first. HDMI preserves the whole
+# frame; the independently configured web streams retain their existing layout.
 INPUTS=(); DISPLAY_OUTPUT=(); FRONT_OUTPUT=(); REAR_OUTPUT=(); MAIN_INDEX=''; PIP_INDEX=''; NEXT_INDEX=0
 if [[ -n "$MD" ]]; then
   MAIN_INDEX="$NEXT_INDEX"; NEXT_INDEX=$((NEXT_INDEX+1))
@@ -88,21 +88,39 @@ if hdmi_connected; then
   FB_NAME="$(basename "$DISPLAY_DEVICE")"
   FB_SIZE_PATH="/sys/class/graphics/${FB_NAME}/virtual_size"
   DS="$(tr ',' 'x' <"$FB_SIZE_PATH")"; [[ "$DS" =~ ^[0-9]+x[0-9]+$ ]] || exit 12
-  DW="${DS%x*}"; DH="${DS#*x}"; PW=$((DW*PIP_PC/100)); PH=$((PW*9/16))
+  DW="${DS%x*}"; DH="${DS#*x}"
+  # KMS can scan out only the top-left of a larger fbdev allocation after an
+  # HDMI hotplug. Render to the active monitor mode, not the virtual fb size.
+  VS="$(kmsprint 2>/dev/null | awk '/^[[:space:]]*Crtc [0-9]+ / {split($4, mode, "@"); print mode[1]; exit}' || true)"
+  if [[ ! "$VS" =~ ^[0-9]+x[0-9]+$ ]]; then
+    for CONNECTOR in /sys/class/drm/card*-HDMI-A-*/status; do
+      [[ -f "$CONNECTOR" && "$(<"$CONNECTOR")" == connected ]] || continue
+      VS="$(head -n 1 "${CONNECTOR%/status}/modes")"; break
+    done
+  fi
+  [[ "$VS" =~ ^[0-9]+x[0-9]+$ ]] || VS="$DS"
+  VW="${VS%x*}"; VH="${VS#*x}"
+  (( VW <= DW && VH <= DH )) || { echo "HDMI mode ${VS} exceeds framebuffer ${DS}" >&2; exit 12; }
+  PW=$((VW*PIP_PC/100)); PW=$((PW/2*2)); PH=$((PW*9/16)); PH=$((PH/2*2))
+  (( PW > 0 && PH > 0 && PW + MARGIN <= VW && PH + MARGIN <= VH )) || { echo 'PiP geometry exceeds HDMI mode' >&2; exit 12; }
+  HDMI_FIT="scale=${VW}:${VH}:force_original_aspect_ratio=decrease,pad=${VW}:${VH}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+  PIP_FIT="scale=${PW}:${PH}:force_original_aspect_ratio=decrease,pad=${PW}:${PH}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+  FRAMEBUFFER_PAD=""; [[ "$VS" == "$DS" ]] || FRAMEBUFFER_PAD=",pad=${DW}:${DH}:0:0"
   if [[ -n "$MAIN_INDEX" && -n "$PIP_INDEX" ]]; then
     F="[${MAIN_INDEX}:v]split=2[mn0][md0];[${PIP_INDEX}:v]split=2[pn0][pd0];"
     F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
     F+="[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
-    F+="[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[base];"
-    F+="[pd0]${PR}scale=${PW}:${PH}:force_original_aspect_ratio=increase,crop=${PW}:${PH},setsar=1[inset];"
-    F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[display]"
+    F+="[md0]${MR}${HDMI_FIT}[base];"
+    F+="[pd0]${PR}${PIP_FIT}[inset];"
+    F+="[base][inset]overlay=x=W-w-${MARGIN}:y=H-h-${MARGIN}:shortest=0:repeatlast=1:eof_action=repeat[monitor];"
+    F+="[monitor]null${FRAMEBUFFER_PAD}[display]"
   elif [[ -n "$MAIN_INDEX" ]]; then
-    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];[md0]${MR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[display]"
+    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   else
-    F="[${PIP_INDEX}:v]split=2[pn0][pd0];[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];[pd0]${PR}scale=${DW}:${DH}:force_original_aspect_ratio=increase,crop=${DW}:${DH},setsar=1[display]"
+    F="[${PIP_INDEX}:v]split=2[pn0][pd0];[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];[pd0]${PR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   fi
   DISPLAY_OUTPUT=(-map '[display]' -c:v rawvideo -pix_fmt "$PIXEL_FORMAT" -f fbdev "$DISPLAY_DEVICE")
-  echo "HDMI-priority mode: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> native ${DS}; input queues ${INPUT_QUEUE_SIZE}." >&2
+  echo "HDMI-priority mode: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> monitor ${VS} uncropped, framebuffer ${DS}; input queues ${INPUT_QUEUE_SIZE}." >&2
 else
   F=''
   [[ -z "$MAIN_INDEX" ]] || F+="[${MAIN_INDEX}:v]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
