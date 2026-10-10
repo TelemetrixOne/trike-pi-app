@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import logging
-import os
-from pathlib import Path
 import queue
 import signal
 import time
@@ -17,8 +15,6 @@ from ..mqtt import make_client
 
 
 LOG = logging.getLogger(__name__)
-SPLASH_MARKER = Path('/run/hpr-demo-show/hdmi-splash.json')
-VIDEO_STATUS = Path('/run/hpr-video/video-status.json')
 
 # Seconds from the accepted request. Each cue is an existing GPIO-control
 # command; the demo never drives a pin directly. Leave time for restoration
@@ -176,37 +172,6 @@ class DemoShow:
         }[name]
         self.wait_state(key, expected)
 
-    def show_splash(self, request_id: str):
-        # systemd owns the transient directory; expiry restores the camera
-        # even if this listener dies before its finally block can run.
-        temporary = SPLASH_MARKER.with_suffix('.new')
-        temporary.write_text(json.dumps({
-            'request_id': request_id, 'expires_at': time.time() + 35,
-        }))
-        os.replace(temporary, SPLASH_MARKER)
-
-    def wait_splash(self):
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            try:
-                status = json.loads(VIDEO_STATUS.read_text())
-            except (OSError, ValueError):
-                status = {}
-            if status.get('display_mode') is None and status:
-                return  # No HDMI screen: the audible/lighting demo still runs.
-            if status.get('hdmi_source') == 'splash' and status.get('children', {}).get('hdmi', {}).get('frames', 0) > 0:
-                return
-            time.sleep(0.05)
-        raise RuntimeError('HDMI splash did not become visible')
-
-    def clear_splash(self, request_id: str):
-        try:
-            marker = json.loads(SPLASH_MARKER.read_text())
-            if marker.get('request_id') == request_id:
-                SPLASH_MARKER.unlink(missing_ok=True)
-        except FileNotFoundError:
-            pass
-
     def play(self, request_id: str):
         # Wait briefly for GPIO's retained state so we can restore it later.
         deadline = time.monotonic() + 5
@@ -223,7 +188,6 @@ class DemoShow:
         started = time.monotonic()
         failure = None
         try:
-            self.show_splash(request_id)
             # Blackout before the first pass. Mode alone does not prove the
             # headlight output changed; require its effective and sensed states.
             self.send("aux_lights", "OFF")
@@ -233,7 +197,6 @@ class DemoShow:
             self.wait_state("headlight/mode", "OFF")
             self.wait_state("headlight/state", "OFF")
             self.wait_state("input/headlamp/state", "OFF")
-            self.wait_splash()
             for when, name, value in SHOW_CUES:
                 self.wait_until(started, when)
                 self.cue(name, value)
@@ -242,11 +205,6 @@ class DemoShow:
             LOG.exception("Demo interrupted")
             failure = str(exc)
         finally:
-            try:
-                self.clear_splash(request_id)
-            except Exception:
-                LOG.exception("Unable to release HDMI splash after demo")
-                failure = "HDMI splash restoration failed"
             # Remote horn has its own pulse expiry. Restore original mode and
             # requested states even if the rider switch changed during play.
             if original_mode == "AUTO":

@@ -12,30 +12,6 @@ spec.loader.exec_module(video)
 
 
 class NativeVideoTests(unittest.TestCase):
-    def test_demo_splash_marker_expires_and_uses_uncropped_hdmi(self):
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / 'hdmi-splash.json'
-            marker.write_text('{"expires_at": 123}')
-            self.assertTrue(video.demo_splash_requested(marker, now=100))
-            self.assertFalse(video.demo_splash_requested(marker, now=123))
-            marker.write_text('bad json')
-            self.assertFalse(video.demo_splash_requested(marker, now=100))
-        pipeline = video.splash_pipeline('/tmp/splash.png', (33, 800, 480))
-        self.assertIn('imagefreeze', pipeline)
-        self.assertIn('add-borders=true', pipeline)
-        self.assertIn('width=800,height=480', pipeline)
-        self.assertNotIn('crop', pipeline)
-
-    def test_hdmi_camera_and_splash_share_one_worker(self):
-        pipeline = video.display_pipeline('/tmp/display.sock', '1280x720', 30,
-                                          {'rotation': '180'}, (33, 800, 480), '/tmp/splash.png')
-        self.assertIn('input-selector name=view', pipeline)
-        self.assertIn('view.sink_0', pipeline)
-        self.assertIn('view.sink_1', pipeline)
-        self.assertIn('shmsrc', pipeline)
-        self.assertIn('imagefreeze', pipeline)
-        self.assertEqual(pipeline.count('kmssink'), 1)
-
     def test_watchdog_detects_live_process_without_frame_progress(self):
         self.assertFalse(video.stalled(100, {}, 110))
         self.assertTrue(video.stalled(100, {}, 116))
@@ -89,8 +65,6 @@ class NativeVideoTests(unittest.TestCase):
                 self.description = description
                 self.process = SimpleNamespace(pid=len(started))
                 self.heartbeat = directory / (name + '.json')
-                if name.endswith('-capture'):
-                    video.write_json(self.heartbeat, {'at': video.time.monotonic(), 'frames': 1})
                 for path in video.re.findall(r'socket-path=("[^"]+")', description):
                     Path(video.json.loads(path)).touch()
 
@@ -112,7 +86,6 @@ class NativeVideoTests(unittest.TestCase):
             settings = {'cameras': {'front': {'device': str(front)}, 'rear': {'device': str(rear)}}}
             with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
                  patch.object(video, 'Child', FakeChild), \
-                 patch.object(video, 'write_json', side_effect=lambda path, value: Path(path).write_text(video.json.dumps(value))), \
                  patch.object(video.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
                  patch.object(video.time, 'sleep', side_effect=tick), \
                  patch.object(video, 'display_mode', side_effect=[None, (33, 800, 480), None]):

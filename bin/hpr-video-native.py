@@ -18,7 +18,6 @@ import time
 QUEUE = 'queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream'
 STARTUP_GRACE = 15
 STALL_TIMEOUT = 2
-DEMO_SPLASH_MARKER = Path('/run/hpr-demo-show/hdmi-splash.json')
 
 
 def quote(value):
@@ -58,42 +57,14 @@ def source_pipeline(socket, size, fps):
             f'{jpeg_caps(size, fps)} ! {QUEUE} ! jpegdec')
 
 
-def display_pipeline(socket, size, fps, camera, mode, image=None):
+def display_pipeline(socket, size, fps, camera, mode):
     connector, width, height = mode
-    fit = (f'videoscale add-borders=true ! videoconvert ! '
-           f'video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,format=BGRA')
-    sink = ('kmssink name=progress driver-name=vc4 '
-            f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
-            'force-modesetting=false enable-last-sample=false')
-    camera_branch = (f'{source_pipeline(socket, size, fps)} ! '
-                     f'videoflip video-direction={rotation(camera)} ! {fit}')
-    if image is None:
-        return f'{camera_branch} ! {sink}'
-    # One display worker retains its SHM reader for the whole demo. Switching
-    # between two KMS workers released the SHM ring and froze the camera view.
-    image_branch = (f'filesrc location={quote(image)} ! pngdec ! imagefreeze ! '
-                    'video/x-raw,framerate=30/1 ! ' + fit)
-    return (f'input-selector name=view sync-streams=false ! {sink} '
-            f'{camera_branch} ! {QUEUE} ! view.sink_0 '
-            f'{image_branch} ! {QUEUE} ! view.sink_1')
-
-
-def splash_pipeline(image, mode):
-    connector, width, height = mode
-    return (f'filesrc location={quote(image)} ! pngdec ! imagefreeze ! '
-            'video/x-raw,framerate=10/1 ! videoscale add-borders=true ! videoconvert ! '
+    return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
+            '! videoscale add-borders=true ! videoconvert ! '
             f'video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,format=BGRA ! '
             'kmssink name=progress driver-name=vc4 '
             f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
             'force-modesetting=false enable-last-sample=false')
-
-
-def demo_splash_requested(marker=DEMO_SPLASH_MARKER, now=None):
-    try:
-        request = json.loads(marker.read_text())
-        return float(request['expires_at']) > (time.time() if now is None else now)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
 
 
 def publisher_pipeline(socket, size, fps, camera, role, port):
@@ -179,9 +150,7 @@ def worker(description, heartbeat, kind):
         os.nice(5)
     pipeline = Gst.parse_launch(description)
     element = pipeline.get_by_name('progress')
-    selector = pipeline.get_by_name('view') if kind == 'display' else None
-    frames, previous = [0], [(-1, None)]
-    source = ['splash' if kind == 'display' and selector is None else 'camera']
+    frames, previous = [0], [0]
     # Completed sink renders detect a blocked KMS sink; a probe before it
     # would incorrectly report queued frames as displayed.
     if kind != 'display':
@@ -191,33 +160,11 @@ def worker(description, heartbeat, kind):
         element.get_static_pad('src').add_probe(Gst.PadProbeType.BUFFER, buffer_probe)
     loop, failed = GLib.MainLoop(), [False]
 
-    if selector is not None:
-        started = time.monotonic()
-        camera_pad = selector.get_static_pad('sink_0')
-        splash_pad = selector.get_static_pad('sink_1')
-        if camera_pad is None or splash_pad is None:
-            raise RuntimeError('HDMI selector pads are missing')
-
-        def select_view():
-            show = time.monotonic() - started < 3 or demo_splash_requested()
-            desired = splash_pad if show else camera_pad
-            if selector.get_property('active-pad') != desired:
-                selector.set_property('active-pad', desired)
-            source[0] = 'splash' if show else 'camera'
-            return True
-
-        select_view()
-        GLib.timeout_add(100, select_view)
-
     def progress():
         count = frames[0] if kind != 'display' else element.get_property('stats').get_value('rendered')
-        sample = (count, source[0] if kind == 'display' else None)
-        if sample != previous[0]:
-            value = {'at': time.monotonic(), 'frames': count}
-            if kind == 'display':
-                value['source'] = source[0]
-            write_json(heartbeat, value)
-            previous[0] = sample
+        if count != previous[0]:
+            write_json(heartbeat, {'at': time.monotonic(), 'frames': count})
+            previous[0] = count
         return True
 
     def message(bus, msg):
@@ -275,7 +222,6 @@ def supervise(settings):
     size = display.get('capture_size', '1280x720')
     fps = int(display.get('capture_framerate', 30))
     root = Path(os.environ.get('RUNTIME_DIRECTORY', '/tmp'))
-    image = Path(os.environ.get('HPR_INSTALL_ROOT', '/opt/hpr/gateway')) / 'runtime/video/startup-splash.png'
     running = [True]
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))
     signal.signal(signal.SIGINT, lambda *_: running.__setitem__(0, False))
@@ -330,20 +276,12 @@ def supervise(settings):
                                 socket, size, fps, camera, role, settings.get('rtsp_port', 8554)))
                 mode = display_mode() if display.get('enabled', True) else None
                 socket = directory / 'display.sock'
-                front_capture = children.get('front-capture')
-                front_ready = bool(identities.get('front') and socket.exists() and front_capture
-                                   and read_progress(front_capture.heartbeat).get('frames', 0) > 0)
-                if mode and front_ready:
-                    ensure('hdmi', 'display', display_pipeline(
-                        socket, size, fps, cameras['front'], mode, image if image.is_file() else None))
-                elif mode and image.is_file():
-                    ensure('hdmi', 'display', splash_pipeline(image, mode))
+                if mode and identities.get('front') and socket.exists():
+                    ensure('hdmi', 'display', display_pipeline(socket, size, fps, cameras['front'], mode))
                 else:
                     stop('hdmi')
-                hdmi = children.get('hdmi')
-                hdmi_source = read_progress(hdmi.heartbeat).get('source') if hdmi else None
                 write_json(root / 'video-status.json', {
-                    'at': time.monotonic(), 'display_mode': mode, 'hdmi_source': hdmi_source, 'pip': False,
+                    'at': time.monotonic(), 'display_mode': mode, 'pip': False,
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
                                        **read_progress(child.heartbeat)} for name, child in children.items()}})
                 time.sleep(0.5)

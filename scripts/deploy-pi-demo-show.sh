@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scoped, reversible deployment. Starts only the new request listener.
+# Scoped, reversible deployment of the camera-only HDMI path and demo listener.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
@@ -8,15 +8,12 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_ROOT="/opt/hpr/backups/demo-show-${STAMP}"
 
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
-for source in bin/hpr-video-splash.sh bin/hpr-video-native.py assets/startup-splash.png hpr_gateway/services/demo_show.py; do
+for source in bin/hpr-video-native.py hpr_gateway/services/demo_show.py; do
   [[ -f "${REPO_ROOT}/${source}" ]] || { echo "Missing ${source}" >&2; exit 1; }
 done
-bash -n "${REPO_ROOT}/bin/hpr-video-splash.sh"
 "/usr/bin/python3" -m py_compile "${REPO_ROOT}/bin/hpr-video-native.py"
 "${INSTALL_ROOT}/venv/bin/python" -m py_compile "${REPO_ROOT}/hpr_gateway/services/demo_show.py"
-for plugin in pngdec imagefreeze kmssink; do
-  gst-inspect-1.0 "$plugin" >/dev/null || { echo "Missing GStreamer plugin: $plugin" >&2; exit 1; }
-done
+gst-inspect-1.0 kmssink >/dev/null
 PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" -m hpr_gateway.validate_config --config "$CONFIG_PATH"
 cfg() {
   PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" -m hpr_gateway.config_value \
@@ -51,35 +48,15 @@ if ! cmp -s "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/runtime/vide
   NATIVE_CHANGED=true
   touch "${BACKUP_ROOT}/.native-updated"
 fi
-install -m 0755 "${REPO_ROOT}/bin/hpr-video-splash.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/runtime/video/hpr-video-native.py"
-install -m 0644 "${REPO_ROOT}/assets/startup-splash.png" "${INSTALL_ROOT}/runtime/video/startup-splash.png"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/services/demo_show.py" "${INSTALL_ROOT}/hpr_gateway/services/demo_show.py"
-
-cat > /etc/systemd/system/hpr-video-splash.service <<EOF
-[Unit]
-Description=HPR early HDMI startup image
-After=local-fs.target
-Before=hpr-video-console.service
-
-[Service]
-Type=oneshot
-Environment=HPR_INSTALL_ROOT=${INSTALL_ROOT}
-ExecStart=${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh
-TimeoutStartSec=6
-RemainAfterExit=yes
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-install -d -m 0755 /etc/systemd/system/hpr-video-console.service.d
-cat > /etc/systemd/system/hpr-video-console.service.d/20-startup-splash.conf <<'EOF'
-[Unit]
-Wants=hpr-video-splash.service
-After=hpr-video-splash.service
-EOF
+systemctl disable --now hpr-video-splash.service 2>/dev/null || true
+rm -f -- \
+  "${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh" \
+  "${INSTALL_ROOT}/runtime/video/startup-splash.png" \
+  /etc/systemd/system/hpr-video-splash.service \
+  /etc/systemd/system/hpr-video-console.service.d/20-startup-splash.conf \
+  /run/hpr-demo-show/hdmi-splash.json
 
 systemctl disable --now hpr-startup-show.service 2>/dev/null || true
 if systemctl is-active --quiet hpr-startup-show.service; then
@@ -108,15 +85,13 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
-RuntimeDirectory=hpr-demo-show
-RuntimeDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/hpr-video-splash.service /etc/systemd/system/hpr-demo-show.service
+systemd-analyze verify /etc/systemd/system/hpr-demo-show.service
 systemctl enable hpr-demo-show.service
 if [[ "$NATIVE_CHANGED" == true ]]; then
   systemctl restart hpr-video-compositor.service
@@ -124,4 +99,4 @@ if [[ "$NATIVE_CHANGED" == true ]]; then
 fi
 systemctl restart hpr-demo-show.service
 systemctl is-active --quiet hpr-demo-show.service
-echo "HDMI splash and on-demand demo listener updated; video compositor restarted only if its native code changed. GPIO was not restarted. Backup: ${BACKUP_ROOT}"
+echo "HDMI splash removed; camera-only video and on-demand demo listener updated. GPIO was not restarted. Backup: ${BACKUP_ROOT}"
