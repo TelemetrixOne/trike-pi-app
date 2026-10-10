@@ -16,6 +16,40 @@ from ..mqtt import make_client
 
 LOG = logging.getLogger(__name__)
 
+# Seconds from the accepted request. Each cue is an existing GPIO-control
+# command; the demo never drives a pin directly. Leave time for restoration
+# before the roughly 20-second finish.
+SHOW_END_SECONDS = 19.2
+SHOW_CUES = (
+    (1.50, "aux_lights", "ON"), (1.85, "aux_lights", "OFF"),
+    (2.10, "headlight", "ON"), (2.45, "headlight", "OFF"),
+    (2.75, "aux_lights", "ON"), (3.05, "aux_lights", "OFF"),
+    (3.30, "headlight", "ON"), (3.35, "aux_lights", "ON"),
+    (4.10, "horn", "ON"), (4.38, "horn", "OFF"),
+    (4.65, "drs", "OPEN"),
+    (5.10, "aux_lights", "OFF"), (5.40, "headlight", "OFF"),
+    (6.05, "aux_lights", "ON"), (6.35, "aux_lights", "OFF"),
+    (7.00, "drs", "CLOSED"),
+    (7.25, "horn", "ON"), (7.45, "horn", "OFF"),
+    (7.70, "horn", "ON"), (7.92, "horn", "OFF"),
+    (8.25, "headlight", "ON"), (8.55, "headlight", "OFF"),
+    (8.80, "aux_lights", "ON"), (9.12, "aux_lights", "OFF"),
+    (9.40, "horn", "ON"), (9.78, "horn", "OFF"),
+    (10.20, "headlight", "ON"), (10.30, "aux_lights", "ON"),
+    (11.35, "drs", "OPEN"),
+    (11.75, "horn", "ON"), (12.00, "horn", "OFF"),
+    (12.55, "aux_lights", "OFF"), (13.00, "headlight", "OFF"),
+    (13.40, "aux_lights", "ON"), (13.72, "aux_lights", "OFF"),
+    (14.10, "horn", "ON"), (14.30, "horn", "OFF"),
+    (14.55, "horn", "ON"), (14.78, "horn", "OFF"),
+    (15.10, "drs", "CLOSED"),
+    (15.55, "headlight", "ON"), (15.85, "headlight", "OFF"),
+    (16.25, "aux_lights", "ON"), (16.55, "aux_lights", "OFF"),
+    (16.90, "headlight", "ON"), (17.00, "aux_lights", "ON"),
+    (17.65, "horn", "ON"), (18.00, "horn", "OFF"),
+    (18.20, "aux_lights", "OFF"), (18.45, "headlight", "OFF"),
+)
+
 
 def eligible(states: dict[str, str]) -> bool:
     """We need complete state to restore it; only an active horn is excluded."""
@@ -122,6 +156,22 @@ class DemoShow:
             time.sleep(0.05)
         raise RuntimeError(f"{key} did not acknowledge {expected}")
 
+    @staticmethod
+    def wait_until(start: float, seconds: float):
+        remaining = start + seconds - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def cue(self, name: str, value: str):
+        self.send(name, value)
+        key, expected = {
+            "aux_lights": ("aux_lights/state", value),
+            "headlight": ("headlight/state", value),
+            "horn": ("horn/state", value),
+            "drs": ("drs/state", "CLOSE" if value == "CLOSED" else "OPEN"),
+        }[name]
+        self.wait_state(key, expected)
+
     def play(self, request_id: str):
         # Wait briefly for GPIO's retained state so we can restore it later.
         deadline = time.monotonic() + 5
@@ -135,6 +185,7 @@ class DemoShow:
         original_aux = self.states["aux_lights/requested_state"]
         original_drs = self.states["drs/mode"]
         self.status("running", request_id)
+        started = time.monotonic()
         failure = None
         try:
             # Blackout before the first pass. Mode alone does not prove the
@@ -146,32 +197,10 @@ class DemoShow:
             self.wait_state("headlight/mode", "OFF")
             self.wait_state("headlight/state", "OFF")
             self.wait_state("input/headlamp/state", "OFF")
-            time.sleep(1.5)
-            for _ in range(3):
-                for _ in range(2):
-                    self.send("aux_lights", "ON")
-                    self.wait_state("aux_lights/requested_state", "ON")
-                    time.sleep(0.18)
-                    self.send("aux_lights", "OFF")
-                    self.wait_state("aux_lights/requested_state", "OFF")
-                    self.send("headlight", "ON")
-                    self.wait_state("headlight/mode", "ON")
-                    time.sleep(0.18)
-                    self.send("headlight", "OFF")
-                    self.wait_state("headlight/mode", "OFF")
-                for duration in (0.16, 0.16, 0.35):
-                    self.send("horn", "ON")
-                    self.wait_state("horn/state", "ON")
-                    time.sleep(duration)
-                    self.send("horn", "OFF")
-                    self.wait_state("horn/state", "OFF")
-                    time.sleep(0.18)
-                self.send("drs", "OPEN")
-                self.wait_state("drs/state", "OPEN")
-                time.sleep(1.0)
-                self.send("drs", "CLOSED")
-                self.wait_state("drs/state", "CLOSE")
-                time.sleep(0.7)
+            for when, name, value in SHOW_CUES:
+                self.wait_until(started, when)
+                self.cue(name, value)
+            self.wait_until(started, SHOW_END_SECONDS)
         except Exception as exc:
             LOG.exception("Demo interrupted")
             failure = str(exc)

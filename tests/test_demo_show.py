@@ -2,10 +2,22 @@ import json
 import unittest
 import uuid
 
-from hpr_gateway.services.demo_show import DemoShow, eligible, parse_request
+from hpr_gateway.services.demo_show import (
+    DemoShow, SHOW_CUES, SHOW_END_SECONDS, eligible, parse_request,
+)
 
 
 class DemoShowTests(unittest.TestCase):
+    def test_choreography_is_ordered_and_leaves_room_for_restoration(self):
+        times = [when for when, _, _ in SHOW_CUES]
+        self.assertEqual(times, sorted(times))
+        self.assertGreaterEqual(times[0], 1.5)
+        self.assertLess(times[-1], SHOW_END_SECONDS)
+        self.assertLess(SHOW_END_SECONDS, 20)
+        self.assertEqual([value for _, name, value in SHOW_CUES if name == "drs"],
+                         ["OPEN", "CLOSED", "OPEN", "CLOSED"])
+        self.assertEqual([value for _, name, value in SHOW_CUES if name == "horn"].count("ON"), 8)
+
     def test_requires_snapshot_but_allows_existing_light_and_drs_modes(self):
         state = {
             "horn/state": "OFF", "headlight/state": "OFF", "headlight/mode": "AUTO",
@@ -70,10 +82,11 @@ class DemoShowTests(unittest.TestCase):
                 show.states["drs/state"] = "OPEN" if value == "OPEN" else "CLOSE"
 
         show.send = send
+        show.wait_until = lambda _start, _seconds: None
         show.play(str(uuid.uuid4()))
         self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
-        self.assertEqual(commands.count(("drs", "OPEN")), 3)
-        self.assertEqual(commands.count(("horn", "ON")), 9)
+        self.assertEqual(commands.count(("drs", "OPEN")), 2)
+        self.assertEqual(commands.count(("horn", "ON")), 8)
         self.assertEqual(commands.count(("headlight", "ON")), 7)  # six flashes plus requested-state restoration
         self.assertEqual(statuses[-1], ("completed", None))
         self.assertEqual(show.states["horn/state"], "OFF")
@@ -110,6 +123,7 @@ class DemoShowTests(unittest.TestCase):
                 show.states["drs/mode"] = value
 
         show.send = send
+        show.wait_until = lambda _start, _seconds: None
         show.wait_state = lambda key, expected, timeout=2.0: (
             None if show.states.get(key) == expected else
             (_ for _ in ()).throw(RuntimeError(f"{key} did not acknowledge {expected}"))

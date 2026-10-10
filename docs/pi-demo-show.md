@@ -28,12 +28,14 @@ auxiliary-light requested state, and DRS mode. Lights and DRS modes can be
 temporarily overridden. It requests a 1.5-second blackout first, checking
 the headlight's effective GPIO state and its separate feedback input are OFF.
 If the headlamp feedback stays ON, the demo fails before any horn or DRS action
-and restores the original settings. It then runs the auxiliary/headlight
-flashes, short-short-long fixed-pitch horn rhythm, and DRS open/close routine
-three times before restoring
-the original headlight, auxiliary-light, and DRS modes. An error aborts the
-show and still runs restoration. A physical
-switch may continue to force an output (including auxiliary lights), and an already-active momentary horn
+and restores the original settings. A roughly 20-second cue schedule then
+mixes alternating and paired light flashes, eight varied fixed-pitch horn pulses,
+and two spaced DRS open/close movements. It closes with all demo lights and
+the horn off before restoring the original headlight, auxiliary-light, and DRS
+modes. Timing is best-effort because each command waits for an acknowledgement;
+the restore phase is reserved at the end. An error aborts the show and still
+runs restoration. A physical switch may continue to force an output (including
+auxiliary lights), and an already-active momentary horn
 pulse cannot be restored to its exact remaining duration. There is no direct
 GPIO access in the demo listener. **The operator remains responsible for
 running the demo only when the trike is stationary and clear of people.**
