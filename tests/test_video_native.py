@@ -33,6 +33,10 @@ class NativeVideoTests(unittest.TestCase):
         self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 104, False), 'camera')
         self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 120, True), 'splash')
         self.assertEqual(video.choose_hdmi_source(None, True, True, 100, 120, True), None)
+        drain = video.display_drain_pipeline('/tmp/display.sock', '1280x720', 30)
+        self.assertIn('shmsrc', drain)
+        self.assertIn('fakesink', drain)
+        self.assertNotIn('jpegdec', drain)
 
     def test_watchdog_detects_live_process_without_frame_progress(self):
         self.assertFalse(video.stalled(100, {}, 110))

@@ -44,7 +44,9 @@ running the demo only when the trike is stationary and clear of people.**
 
 For an on-demand demo, the supplied image replaces only the HDMI worker's
 camera picture for the entire sequence; front/rear capture and RTSP publishers
-continue independently. The listener removes its display request when the
+continue independently. A lightweight HDMI SHM drain stays connected during
+the splash so the camera viewer can reclaim its stream without restarting
+front capture. The listener removes its display request when the
 show ends. A time-limited marker also releases the camera view if the listener
 dies unexpectedly. A connected monitor must show advancing splash frames
 before the light/horn/DRS choreography begins; otherwise the demo fails and

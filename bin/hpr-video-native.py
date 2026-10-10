@@ -58,6 +58,15 @@ def source_pipeline(socket, size, fps):
             f'{jpeg_caps(size, fps)} ! {QUEUE} ! jpegdec')
 
 
+def display_drain_pipeline(socket, size, fps):
+    # Keep the HDMI SHM ring connected while the splash owns KMS. Without a
+    # reader, GStreamer's shmsink can release its ring and the returning camera
+    # viewer cannot reconnect without restarting capture (and the front stream).
+    return (f'shmsrc socket-path={quote(socket)} is-live=true do-timestamp=true ! '
+            f'{jpeg_caps(size, fps)} ! {QUEUE} ! identity name=progress silent=true ! '
+            'fakesink sync=false async=false enable-last-sample=false')
+
+
 def display_pipeline(socket, size, fps, camera, mode):
     connector, width, height = mode
     return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
@@ -174,7 +183,7 @@ def worker(description, heartbeat, kind):
     gi.require_version('Gst', '1.0')
     from gi.repository import Gst, GLib
     Gst.init(None)
-    if kind == 'publish':
+    if kind in ('publish', 'drain'):
         os.nice(5)
     pipeline = Gst.parse_launch(description)
     element = pipeline.get_by_name('progress')
@@ -311,15 +320,31 @@ def supervise(settings):
                 front_capture = children.get('front-capture')
                 front_ready = bool(identities.get('front') and socket.exists() and front_capture
                                    and read_progress(front_capture.heartbeat).get('frames', 0) > 0)
-                hdmi_source = choose_hdmi_source(
+                splash_wanted = choose_hdmi_source(
                     mode, image.is_file(), front_ready, first_display_at,
                     time.monotonic(), demo_splash_requested())
+                hdmi_source = splash_wanted
+                camera_description = (display_pipeline(socket, size, fps, cameras['front'], mode)
+                                      if mode and front_ready else None)
+                if hdmi_source == 'splash' and front_ready:
+                    ensure('hdmi-drain', 'drain', display_drain_pipeline(socket, size, fps))
+                    drain = children.get('hdmi-drain')
+                    drain_ready = bool(drain and read_progress(drain.heartbeat).get('frames', 0) > 0)
+                    current_hdmi = children.get('hdmi')
+                    if current_hdmi and current_hdmi.description == camera_description and not drain_ready:
+                        hdmi_source = 'camera'  # Do not release the only SHM reader yet.
                 if hdmi_source == 'splash':
                     ensure('hdmi', 'display', splash_pipeline(image, mode))
                 elif hdmi_source == 'camera':
-                    ensure('hdmi', 'display', display_pipeline(socket, size, fps, cameras['front'], mode))
+                    ensure('hdmi', 'display', camera_description)
                 else:
                     stop('hdmi')
+                hdmi = children.get('hdmi')
+                if (splash_wanted != 'splash' and hdmi and hdmi.description == camera_description
+                        and read_progress(hdmi.heartbeat).get('frames', 0) > 0):
+                    stop('hdmi-drain')
+                elif not front_ready:
+                    stop('hdmi-drain')
                 write_json(root / 'video-status.json', {
                     'at': time.monotonic(), 'display_mode': mode, 'hdmi_source': hdmi_source, 'pip': False,
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
