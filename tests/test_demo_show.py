@@ -12,6 +12,7 @@ class DemoShowTests(unittest.TestCase):
             "headlight/requested_state": "OFF",
             "aux_lights/state": "OFF", "aux_lights/requested_state": "OFF", "drs/state": "CLOSE",
             "drs/mode": "RIDER_CONTROL", "input/drs_switch/state": "OFF",
+            "input/headlamp/state": "OFF",
         }
         self.assertTrue(eligible(state))
         self.assertTrue(eligible(dict(state, **{
@@ -45,6 +46,7 @@ class DemoShowTests(unittest.TestCase):
             "headlight/requested_state": "ON", "aux_lights/state": "ON",
             "aux_lights/requested_state": "ON", "drs/state": "CLOSE",
             "drs/mode": "CLOSED", "input/drs_switch/state": "ON",
+            "input/headlamp/state": "ON",
         }
         statuses = []
         commands = []
@@ -62,6 +64,7 @@ class DemoShowTests(unittest.TestCase):
                 if value != "AUTO":
                     show.states["headlight/state"] = value
                     show.states["headlight/requested_state"] = value
+                    show.states["input/headlamp/state"] = value
             elif name == "drs":
                 show.states["drs/mode"] = value
                 show.states["drs/state"] = "OPEN" if value == "OPEN" else "CLOSE"
@@ -69,12 +72,54 @@ class DemoShowTests(unittest.TestCase):
         show.send = send
         show.play(str(uuid.uuid4()))
         self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
+        self.assertEqual(commands.count(("drs", "OPEN")), 3)
+        self.assertEqual(commands.count(("horn", "ON")), 9)
+        self.assertEqual(commands.count(("headlight", "ON")), 7)  # six flashes plus requested-state restoration
         self.assertEqual(statuses[-1], ("completed", None))
         self.assertEqual(show.states["horn/state"], "OFF")
         self.assertEqual(show.states["aux_lights/requested_state"], "ON")
         self.assertEqual(show.states["headlight/mode"], "AUTO")
         self.assertEqual(show.states["headlight/requested_state"], "ON")
         self.assertEqual(show.states["drs/mode"], "CLOSED")
+
+    def test_no_show_if_headlamp_feedback_stays_on(self):
+        show = DemoShow.__new__(DemoShow)
+        show.states = {
+            "horn/state": "OFF", "headlight/state": "ON", "headlight/mode": "ON",
+            "headlight/requested_state": "ON", "aux_lights/state": "ON",
+            "aux_lights/requested_state": "ON", "drs/state": "CLOSE",
+            "drs/mode": "CLOSED", "input/drs_switch/state": "ON",
+            "input/headlamp/state": "ON",
+        }
+        commands = []
+        statuses = []
+        show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
+
+        def send(name, value):
+            commands.append((name, value))
+            if name == "aux_lights":
+                show.states["aux_lights/requested_state"] = value
+                show.states["aux_lights/state"] = value
+            elif name == "headlight":
+                show.states["headlight/mode"] = value
+                show.states["headlight/state"] = value
+                show.states["headlight/requested_state"] = value
+            elif name == "horn":
+                show.states["horn/state"] = value
+            elif name == "drs":
+                show.states["drs/mode"] = value
+
+        show.send = send
+        show.wait_state = lambda key, expected, timeout=2.0: (
+            None if show.states.get(key) == expected else
+            (_ for _ in ()).throw(RuntimeError(f"{key} did not acknowledge {expected}"))
+        )
+        show.play(str(uuid.uuid4()))
+        self.assertEqual(statuses[-1][0], "failed")
+        self.assertIn("input/headlamp/state", statuses[-1][1])
+        self.assertNotIn(("horn", "ON"), commands)
+        self.assertNotIn(("drs", "OPEN"), commands)
+        self.assertEqual(show.states["headlight/mode"], "ON")
 
 
 if __name__ == "__main__":

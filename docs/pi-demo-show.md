@@ -25,12 +25,15 @@ The Pi accepts a demo when it has complete GPIO state and the momentary horn
 is idle. It does not require GPS, stationary confirmation, or a particular
 physical-switch position. It snapshots the headlight mode/requested state,
 auxiliary-light requested state, and DRS mode. Lights and DRS modes can be
-temporarily overridden. It requests a brief blackout first (where physical
-switches permit), then flashes the auxiliary/headlights, plays a
-short-short-long fixed-pitch horn rhythm, opens then closes DRS, and restores
+temporarily overridden. It requests a 1.5-second blackout first, checking
+the headlight's effective GPIO state and its separate feedback input are OFF.
+If the headlamp feedback stays ON, the demo fails before any horn or DRS action
+and restores the original settings. It then runs the auxiliary/headlight
+flashes, short-short-long fixed-pitch horn rhythm, and DRS open/close routine
+three times before restoring
 the original headlight, auxiliary-light, and DRS modes. An error aborts the
 show and still runs restoration. A physical
-switch may continue to force an output, and an already-active momentary horn
+switch may continue to force an output (including auxiliary lights), and an already-active momentary horn
 pulse cannot be restored to its exact remaining duration. There is no direct
 GPIO access in the demo listener. **The operator remains responsible for
 running the demo only when the trike is stationary and clear of people.**

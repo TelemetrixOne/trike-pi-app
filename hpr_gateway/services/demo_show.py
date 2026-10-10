@@ -22,7 +22,7 @@ def eligible(states: dict[str, str]) -> bool:
     required = (
         "horn/state", "headlight/state", "headlight/mode", "headlight/requested_state",
         "aux_lights/state", "aux_lights/requested_state",
-        "drs/state", "drs/mode", "input/drs_switch/state",
+        "drs/state", "drs/mode", "input/drs_switch/state", "input/headlamp/state",
     )
     if any(key not in states for key in required) or states["horn/state"] != "OFF":
         return False
@@ -137,37 +137,41 @@ class DemoShow:
         self.status("running", request_id)
         failure = None
         try:
-            # Start with a short blackout so the lighting pattern has contrast.
-            # A physically forced-on circuit may remain lit despite its command.
+            # Blackout before the first pass. Mode alone does not prove the
+            # headlight output changed; require its effective and sensed states.
             self.send("aux_lights", "OFF")
             self.wait_state("aux_lights/requested_state", "OFF")
+            self.wait_state("aux_lights/state", "OFF")
             self.send("headlight", "OFF")
             self.wait_state("headlight/mode", "OFF")
-            time.sleep(0.5)
-            for _ in range(2):
-                self.send("aux_lights", "ON")
-                self.wait_state("aux_lights/requested_state", "ON")
-                time.sleep(0.18)
-                self.send("aux_lights", "OFF")
-                self.wait_state("aux_lights/requested_state", "OFF")
-                self.send("headlight", "ON")
-                self.wait_state("headlight/mode", "ON")
-                time.sleep(0.18)
-                self.send("headlight", "OFF")
-                self.wait_state("headlight/mode", "OFF")
-            for duration in (0.16, 0.16, 0.35):
-                self.send("horn", "ON")
-                self.wait_state("horn/state", "ON")
-                time.sleep(duration)
-                self.send("horn", "OFF")
-                self.wait_state("horn/state", "OFF")
-                time.sleep(0.18)
-            self.send("drs", "OPEN")
-            self.wait_state("drs/state", "OPEN")
-            time.sleep(1.0)
-            self.send("drs", "CLOSED")
-            self.wait_state("drs/state", "CLOSE")
-            time.sleep(0.7)
+            self.wait_state("headlight/state", "OFF")
+            self.wait_state("input/headlamp/state", "OFF")
+            time.sleep(1.5)
+            for _ in range(3):
+                for _ in range(2):
+                    self.send("aux_lights", "ON")
+                    self.wait_state("aux_lights/requested_state", "ON")
+                    time.sleep(0.18)
+                    self.send("aux_lights", "OFF")
+                    self.wait_state("aux_lights/requested_state", "OFF")
+                    self.send("headlight", "ON")
+                    self.wait_state("headlight/mode", "ON")
+                    time.sleep(0.18)
+                    self.send("headlight", "OFF")
+                    self.wait_state("headlight/mode", "OFF")
+                for duration in (0.16, 0.16, 0.35):
+                    self.send("horn", "ON")
+                    self.wait_state("horn/state", "ON")
+                    time.sleep(duration)
+                    self.send("horn", "OFF")
+                    self.wait_state("horn/state", "OFF")
+                    time.sleep(0.18)
+                self.send("drs", "OPEN")
+                self.wait_state("drs/state", "OPEN")
+                time.sleep(1.0)
+                self.send("drs", "CLOSED")
+                self.wait_state("drs/state", "CLOSE")
+                time.sleep(0.7)
         except Exception as exc:
             LOG.exception("Demo interrupted")
             failure = str(exc)
