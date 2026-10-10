@@ -935,6 +935,8 @@ class GPIOControlService:
         return STATE_ON if active else STATE_OFF
 
     def _apply_logic(self, runtime: CircuitRuntime, publish: bool = True) -> None:
+        previous_state = runtime.effective_state
+        previous_source = runtime.source
         if runtime.config.switch_mode == MODE_BINARY:
             if self._is_headlight_mode(runtime) and runtime.mode == "AUTO" and self._ambient_auto_enabled(runtime):
                 effective = self._ambient_auto_state(runtime)
@@ -976,7 +978,7 @@ class GPIOControlService:
 
         runtime.effective_state = effective
         runtime.source = source
-        if publish:
+        if publish or effective != previous_state or source != previous_source:
             self._publish_runtime(runtime)
 
     def _publish_runtime(self, runtime: CircuitRuntime) -> None:
@@ -1175,6 +1177,11 @@ class GPIOControlService:
             base = self._base_topic(runtime.config.trike, runtime.config.name)
             if msg.topic == f"{base}/set":
                 if self._is_headlight_mode(runtime):
+                    # The central boot mode, not an old retained command, owns
+                    # the initial setting after a reconnect or service restart.
+                    if msg.retain:
+                        LOG.warning("Ignoring retained headlight command on %s", msg.topic)
+                        return
                     if payload not in (STATE_ON, STATE_OFF, "AUTO"):
                         LOG.warning("Ignoring invalid headlight mode on %s: %r", msg.topic, payload)
                         return
@@ -1218,10 +1225,10 @@ class GPIOControlService:
                     if self._ambient_auto_enabled(runtime) and (
                         not self._is_headlight_mode(runtime) or runtime.mode == "AUTO"
                     ):
-                        self._apply_logic(runtime, publish=True)
+                        self._apply_logic(runtime, publish=False)
                     elif runtime.config.switch_mode == MODE_THREE_POSITION and runtime.config.auto_enabled:
                         if self._three_position_state(runtime) == POSITION_AUTO:
-                            self._apply_logic(runtime, publish=True)
+                            self._apply_logic(runtime, publish=False)
                 time.sleep(float(SERVICE["poll_interval_seconds"]))
         finally:
             self._telemetry.stop()

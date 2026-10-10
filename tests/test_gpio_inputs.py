@@ -6,7 +6,7 @@ from gpiozero import OutputDevice
 from gpiozero.pins.mock import MockFactory
 
 from hpr_gateway.services import gpio_control
-from hpr_gateway.services.gpio_control import GPIOControlService, DRSRuntime, SenseInputConfig, SenseInputRuntime, TelemetryMonitor
+from hpr_gateway.services.gpio_control import CircuitConfig, CircuitRuntime, GPIOControlService, DRSRuntime, SenseInputConfig, SenseInputRuntime, TelemetryMonitor
 
 
 class GpioInputTests(unittest.TestCase):
@@ -56,6 +56,40 @@ class GpioInputTests(unittest.TestCase):
             self.assertEqual(self.service._sense_input_state(runtime), "OFF")
             button.pin.drive_high()
             self.assertEqual(self.service._sense_input_state(runtime), "ON")
+
+    def test_headlight_auto_poll_only_publishes_effective_changes(self):
+        config = CircuitConfig("trike1", "headlight", "Headlight", "", 5, "AUTO", True,
+                               control_type="headlight_mode")
+        runtime = CircuitRuntime(config, Mock(), None, None, None, "OFF", "ON", "AUTO", mode="AUTO")
+        self.service._ambient_auto_enabled = Mock(return_value=True)
+        self.service._ambient_auto_state = Mock(side_effect=("ON", "OFF"))
+        self.service._publish_runtime = Mock()
+        self.service._apply_logic(runtime, publish=False)
+        self.service._publish_runtime.assert_not_called()
+        self.service._apply_logic(runtime, publish=False)
+        self.service._publish_runtime.assert_called_once_with(runtime)
+        self.assertEqual(runtime.effective_state, "OFF")
+
+    def test_headlight_live_command_acknowledged_but_retained_command_ignored(self):
+        config = CircuitConfig("trike1", "headlight", "Headlight", "", 5, "AUTO", True,
+                               control_type="headlight_mode")
+        runtime = CircuitRuntime(config, Mock(), None, None, None, "OFF", "OFF", "REMOTE", mode="OFF")
+        self.service._circuits = {"trike1:headlight": runtime}
+        self.service._drs = None
+        self.service._apply_logic = Mock()
+        original_mqtt = gpio_control.MQTT
+        gpio_control.MQTT = {"topic_root": "hpr"}
+        try:
+            self.service._on_message(None, None, Mock(topic="hpr/trike1/control/headlight/set",
+                                                       payload=b"AUTO", retain=True))
+            self.assertEqual(runtime.mode, "OFF")
+            self.service._apply_logic.assert_not_called()
+            self.service._on_message(None, None, Mock(topic="hpr/trike1/control/headlight/set",
+                                                       payload=b"ON", retain=False))
+            self.assertEqual(runtime.mode, "ON")
+            self.service._apply_logic.assert_called_once_with(runtime, publish=True)
+        finally:
+            gpio_control.MQTT = original_mqtt
 
     def test_rider_control_maps_the_local_switch_to_servo_position(self):
         self.service._drs = DRSRuntime(12, 333, 556, 1444)
