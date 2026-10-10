@@ -7,6 +7,21 @@ the demo. Camera captures and streaming publishers remain separate workers.
 Lights, horn, and DRS **never run on boot**. The separate
 `hpr-demo-show.service` listens for an explicit, non-retained MQTT request:
 
+From the Pi console, run the local Python command (no web button required):
+
+```sh
+/opt/hpr/gateway/venv/bin/python /opt/hpr/gateway/bin/hpr-demo-sequence.py
+```
+
+Type `YES` at the prompt. The command uses `/etc/hpr/hpr.yaml` for the broker,
+credentials, topic root and trike identity, generates a fresh UUID, publishes
+with QoS 1 and retain **false**, and waits for the listener's result. It exits
+nonzero for rejection, failure or timeout. `--yes` skips only the console
+confirmation; it does not bypass the listener's state checks or restoration.
+Install or restore this command with `scripts/deploy-pi-demo-trigger.sh` and
+`scripts/rollback-pi-demo-trigger.sh`. Installation does not trigger the show or
+restart any service.
+
 | Purpose | Topic | Payload |
 | --- | --- | --- |
 | Start | `{topic_root}/{trike_id}/control/demo/request` | `{"action":"START","request_id":"<new UUID>"}` |
