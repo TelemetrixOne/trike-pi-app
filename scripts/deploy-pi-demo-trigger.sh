@@ -13,7 +13,7 @@ BACKUP="/opt/hpr/backups/demo-trigger-$(date -u +%Y%m%dT%H%M%SZ)"
 "${INSTALL_ROOT}/venv/bin/python" -m py_compile "$SOURCE"
 PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" -m hpr_gateway.validate_config --config "$CONFIG_PATH"
 systemctl is-active --quiet hpr-demo-show.service || { echo 'Demo listener is not active' >&2; exit 1; }
-"${INSTALL_ROOT}/venv/bin/python" "$SOURCE" --help >/dev/null
+PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" "$SOURCE" --help >/dev/null
 
 install -d -m 0700 "$BACKUP"
 if [[ -e "$TARGET" ]]; then
