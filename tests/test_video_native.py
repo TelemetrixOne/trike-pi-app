@@ -26,17 +26,15 @@ class NativeVideoTests(unittest.TestCase):
         self.assertIn('width=800,height=480', pipeline)
         self.assertNotIn('crop', pipeline)
 
-    def test_hdmi_splash_covers_boot_and_demo_without_restarting_capture(self):
-        mode = (33, 800, 480)
-        self.assertEqual(video.choose_hdmi_source(mode, True, False, 100, 100, False), 'splash')
-        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 102, False), 'splash')
-        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 104, False), 'camera')
-        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 120, True), 'splash')
-        self.assertEqual(video.choose_hdmi_source(None, True, True, 100, 120, True), None)
-        drain = video.display_drain_pipeline('/tmp/display.sock', '1280x720', 30)
-        self.assertIn('shmsrc', drain)
-        self.assertIn('fakesink', drain)
-        self.assertNotIn('jpegdec', drain)
+    def test_hdmi_camera_and_splash_share_one_worker(self):
+        pipeline = video.display_pipeline('/tmp/display.sock', '1280x720', 30,
+                                          {'rotation': '180'}, (33, 800, 480), '/tmp/splash.png')
+        self.assertIn('input-selector name=view', pipeline)
+        self.assertIn('view.sink_0', pipeline)
+        self.assertIn('view.sink_1', pipeline)
+        self.assertIn('shmsrc', pipeline)
+        self.assertIn('imagefreeze', pipeline)
+        self.assertEqual(pipeline.count('kmssink'), 1)
 
     def test_watchdog_detects_live_process_without_frame_progress(self):
         self.assertFalse(video.stalled(100, {}, 110))
@@ -114,6 +112,7 @@ class NativeVideoTests(unittest.TestCase):
             settings = {'cameras': {'front': {'device': str(front)}, 'rear': {'device': str(rear)}}}
             with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
                  patch.object(video, 'Child', FakeChild), \
+                 patch.object(video, 'write_json', side_effect=lambda path, value: Path(path).write_text(video.json.dumps(value))), \
                  patch.object(video.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
                  patch.object(video.time, 'sleep', side_effect=tick), \
                  patch.object(video, 'display_mode', side_effect=[None, (33, 800, 480), None]):
