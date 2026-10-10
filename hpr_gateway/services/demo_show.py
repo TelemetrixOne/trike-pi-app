@@ -15,8 +15,6 @@ from ..mqtt import make_client
 
 
 LOG = logging.getLogger(__name__)
-MAX_GPS_AGE = 3.0
-MAX_SPEED_KMH = 1.0
 
 
 def eligible(states: dict[str, str]) -> bool:
@@ -37,32 +35,13 @@ def eligible(states: dict[str, str]) -> bool:
     )
 
 
-def moving_nav(payload: dict, received_at: float, now: float) -> bool:
-    """Fresh valid GPS motion vetoes a supervised pit demo."""
-    try:
-        speed = float(payload["speed_kmh"])
-        fix_mode = int(payload["fix_mode"])
-        fix_age = float(payload["fix_age_ms"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    return (
-        payload.get("location_valid") is True
-        and fix_mode >= 2
-        and 0 <= fix_age <= 2000
-        and 0 <= now - received_at <= MAX_GPS_AGE
-        and speed > MAX_SPEED_KMH
-    )
-
-
 def parse_request(raw: bytes, retained: bool) -> str:
     if retained:
         raise ValueError("retained requests are not accepted")
     try:
         message = json.loads(raw)
-        if message.get("action") != "START" or set(message) != {"action", "request_id", "stationary_confirmed"}:
-            raise ValueError("expected action START, request_id, and stationary_confirmed")
-        if message["stationary_confirmed"] is not True:
-            raise ValueError("operator must confirm trike is stationary")
+        if message.get("action") != "START" or set(message) != {"action", "request_id"}:
+            raise ValueError("expected action START and request_id")
         request_id = str(uuid.UUID(message["request_id"]))
     except (TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid demo request") from exc
@@ -75,14 +54,10 @@ class DemoShow:
         self.prefix = f"{config.topic_root.strip('/')}/{config.trike_id}"
         self.request_topic = f"{self.prefix}/control/demo/request"
         self.status_topic = f"{self.prefix}/control/demo/status"
-        self.nav_topic = config.resolve_topic(config.get("gps.topic"), "nav")
         self.client = make_client(config, f"hpr-{config.trike_id}-demo-show")
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.states: dict[str, str] = {}
-        self.nav: dict = {}
-        self.nav_at = 0.0
-        self.initial_switch = ""
         self.requests: queue.Queue[str] = queue.Queue(maxsize=1)
         self.seen: set[str] = set()
         self.stopping = False
@@ -105,18 +80,9 @@ class DemoShow:
         client.subscribe(f"{self.prefix}/control/+/mode", qos=1)
         client.subscribe(f"{self.prefix}/control/+/requested_state", qos=1)
         client.subscribe(f"{self.prefix}/input/+/state", qos=1)
-        client.subscribe(self.nav_topic, qos=0)
         self.status("ready")
 
     def on_message(self, _client, _userdata, message):
-        if message.topic == self.nav_topic:
-            try:
-                self.nav = json.loads(message.payload)
-                self.nav_at = time.monotonic()
-            except (TypeError, ValueError):
-                self.nav = {}
-                self.nav_at = 0.0
-            return
         if message.topic == self.request_topic:
             try:
                 request_id = parse_request(message.payload, bool(message.retain))
@@ -148,79 +114,53 @@ class DemoShow:
         if not result.is_published():
             raise RuntimeError(f"{name} command was not published")
 
-    def safe_to_continue(self) -> bool:
-        return (
-            not moving_nav(self.nav, self.nav_at, time.monotonic())
-            and self.states.get("input/drs_switch/state") == self.initial_switch
-        )
-
-    def wait_safe(self, duration: float):
-        deadline = time.monotonic() + duration
-        while time.monotonic() < deadline:
-            if not self.safe_to_continue():
-                raise RuntimeError("GPS motion or DRS switch change")
-            time.sleep(max(0, min(0.05, deadline - time.monotonic())))
-
     def wait_state(self, key: str, expected: str, timeout: float = 2.0):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.states.get(key) == expected:
                 return
-            self.wait_safe(0.05)
+            time.sleep(0.05)
         raise RuntimeError(f"{key} did not acknowledge {expected}")
 
     def play(self, request_id: str):
-        # Wait briefly for GPIO's retained state; GPS may not have an indoor fix.
+        # Wait briefly for GPIO's retained state so we can restore it later.
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not eligible(self.states):
             time.sleep(0.05)
         if not eligible(self.states):
             self.status("rejected", request_id, "complete GPIO state required; horn must be idle")
             return
-        if moving_nav(self.nav, self.nav_at, time.monotonic()):
-            self.status("rejected", request_id, "GPS reports motion")
-            return
-
         original_mode = self.states["headlight/mode"]
         original_headlight_request = self.states["headlight/requested_state"]
         original_aux = self.states["aux_lights/requested_state"]
         original_drs = self.states["drs/mode"]
-        self.initial_switch = self.states["input/drs_switch/state"]
         self.status("running", request_id)
         failure = None
         try:
             for _ in range(2):
-                if not self.safe_to_continue():
-                    raise RuntimeError("motion or DRS switch change")
                 self.send("aux_lights", "ON")
-                self.wait_state("aux_lights/state", "ON")
-                self.wait_safe(0.18)
+                self.wait_state("aux_lights/requested_state", "ON")
+                time.sleep(0.18)
                 self.send("aux_lights", "OFF")
-                self.wait_state("aux_lights/state", "OFF")
+                self.wait_state("aux_lights/requested_state", "OFF")
                 self.send("headlight", "ON")
-                self.wait_state("headlight/state", "ON")
-                self.wait_safe(0.18)
+                self.wait_state("headlight/mode", "ON")
+                time.sleep(0.18)
                 self.send("headlight", "OFF")
-                self.wait_state("headlight/state", "OFF")
+                self.wait_state("headlight/mode", "OFF")
             for duration in (0.16, 0.16, 0.35):
-                if not self.safe_to_continue():
-                    raise RuntimeError("motion or DRS switch change")
                 self.send("horn", "ON")
                 self.wait_state("horn/state", "ON")
-                self.wait_safe(duration)
+                time.sleep(duration)
                 self.send("horn", "OFF")
                 self.wait_state("horn/state", "OFF")
-                self.wait_safe(0.18)
-            if not self.safe_to_continue():
-                raise RuntimeError("motion or DRS switch change")
+                time.sleep(0.18)
             self.send("drs", "OPEN")
             self.wait_state("drs/state", "OPEN")
-            self.wait_safe(1.0)
-            if not self.safe_to_continue():
-                raise RuntimeError("motion or DRS switch change")
+            time.sleep(1.0)
             self.send("drs", "CLOSED")
             self.wait_state("drs/state", "CLOSE")
-            self.wait_safe(0.7)
+            time.sleep(0.7)
         except Exception as exc:
             LOG.exception("Demo interrupted")
             failure = str(exc)

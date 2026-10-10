@@ -1,9 +1,8 @@
 import json
-import time
 import unittest
 import uuid
 
-from hpr_gateway.services.demo_show import DemoShow, eligible, moving_nav, parse_request
+from hpr_gateway.services.demo_show import DemoShow, eligible, parse_request
 
 
 class DemoShowTests(unittest.TestCase):
@@ -26,19 +25,9 @@ class DemoShowTests(unittest.TestCase):
             self.assertFalse(eligible(modified))
         self.assertFalse(eligible(dict(state, **{"horn/state": "ON"})))
 
-    def test_fresh_gps_motion_vetoes_demo(self):
-        now = time.monotonic()
-        nav = {"speed_kmh": 0.2, "fix_mode": 3, "fix_age_ms": 300, "location_valid": True}
-        self.assertFalse(moving_nav(nav, now - 1, now))
-        self.assertTrue(moving_nav(dict(nav, speed_kmh=5), now, now))
-        self.assertFalse(moving_nav(dict(nav, speed_kmh=5), now - 5, now))
-        self.assertFalse(moving_nav(dict(nav, speed_kmh=5, fix_mode=1), now, now))
-        self.assertFalse(moving_nav(dict(nav, speed_kmh=5, fix_age_ms=5000), now, now))
-        self.assertFalse(moving_nav({}, now, now))
-
     def test_request_must_be_fresh_unretained_uuid(self):
         identifier = str(uuid.uuid4())
-        raw = json.dumps({"action": "START", "request_id": identifier, "stationary_confirmed": True}).encode()
+        raw = json.dumps({"action": "START", "request_id": identifier}).encode()
         self.assertEqual(parse_request(raw, False), identifier)
         with self.assertRaises(ValueError):
             parse_request(raw, True)
@@ -47,7 +36,7 @@ class DemoShowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_request(b'{"action":"START","request_id":"bad"}', False)
         with self.assertRaises(ValueError):
-            parse_request(json.dumps({"action": "START", "request_id": identifier, "stationary_confirmed": False}).encode(), False)
+            parse_request(json.dumps({"action": "START", "request_id": identifier, "extra": True}).encode(), False)
 
     def test_demo_restores_live_modes_and_requested_states(self):
         show = DemoShow.__new__(DemoShow)
@@ -57,12 +46,8 @@ class DemoShowTests(unittest.TestCase):
             "aux_lights/requested_state": "ON", "drs/state": "CLOSE",
             "drs/mode": "CLOSED", "input/drs_switch/state": "ON",
         }
-        show.nav = {}
-        show.nav_at = 0.0
-        show.initial_switch = ""
         statuses = []
         show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
-        show.wait_safe = lambda duration: None
 
         def send(name, value):
             if name == "horn":
