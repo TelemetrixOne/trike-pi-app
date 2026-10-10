@@ -11,6 +11,7 @@ INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 systemctl disable --now hpr-demo-show.service 2>/dev/null || true
 for target in \
   "${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh" \
+  "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" \
   "${INSTALL_ROOT}/runtime/video/startup-splash.png" \
   "${INSTALL_ROOT}/hpr_gateway/services/startup_show.py" \
   "${INSTALL_ROOT}/hpr_gateway/services/demo_show.py" \
@@ -25,4 +26,7 @@ for target in \
   fi
 done
 systemctl daemon-reload
-echo 'Demo show rolled back; no video or GPIO service was restarted.'
+if [[ -f "${BACKUP_ROOT}/.native-updated" ]]; then
+  systemctl restart hpr-video-compositor.service
+fi
+echo 'Demo show rolled back; video compositor restarted only if its native code changed. GPIO was not restarted.'

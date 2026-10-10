@@ -18,6 +18,7 @@ import time
 QUEUE = 'queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream'
 STARTUP_GRACE = 15
 STALL_TIMEOUT = 2
+DEMO_SPLASH_MARKER = Path('/run/hpr-demo-show/hdmi-splash.json')
 
 
 def quote(value):
@@ -65,6 +66,33 @@ def display_pipeline(socket, size, fps, camera, mode):
             'kmssink name=progress driver-name=vc4 '
             f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
             'force-modesetting=false enable-last-sample=false')
+
+
+def splash_pipeline(image, mode):
+    connector, width, height = mode
+    return (f'filesrc location={quote(image)} ! pngdec ! imagefreeze ! '
+            'video/x-raw,framerate=10/1 ! videoscale add-borders=true ! videoconvert ! '
+            f'video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,format=BGRA ! '
+            'kmssink name=progress driver-name=vc4 '
+            f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
+            'force-modesetting=false enable-last-sample=false')
+
+
+def demo_splash_requested(marker=DEMO_SPLASH_MARKER, now=None):
+    try:
+        request = json.loads(marker.read_text())
+        return float(request['expires_at']) > (time.time() if now is None else now)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def choose_hdmi_source(mode, image_available, front_ready, first_display_at, now, demo_active):
+    if not mode:
+        return None
+    if image_available and (demo_active or (first_display_at is not None and
+                            (now - first_display_at < 3 or not front_ready))):
+        return 'splash'
+    return 'camera' if front_ready else None
 
 
 def publisher_pipeline(socket, size, fps, camera, role, port):
@@ -222,6 +250,8 @@ def supervise(settings):
     size = display.get('capture_size', '1280x720')
     fps = int(display.get('capture_framerate', 30))
     root = Path(os.environ.get('RUNTIME_DIRECTORY', '/tmp'))
+    image = Path(os.environ.get('HPR_INSTALL_ROOT', '/opt/hpr/gateway')) / 'runtime/video/startup-splash.png'
+    first_display_at = None
     running = [True]
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))
     signal.signal(signal.SIGINT, lambda *_: running.__setitem__(0, False))
@@ -276,12 +306,22 @@ def supervise(settings):
                                 socket, size, fps, camera, role, settings.get('rtsp_port', 8554)))
                 mode = display_mode() if display.get('enabled', True) else None
                 socket = directory / 'display.sock'
-                if mode and identities.get('front') and socket.exists():
+                if mode and first_display_at is None:
+                    first_display_at = time.monotonic()
+                front_capture = children.get('front-capture')
+                front_ready = bool(identities.get('front') and socket.exists() and front_capture
+                                   and read_progress(front_capture.heartbeat).get('frames', 0) > 0)
+                hdmi_source = choose_hdmi_source(
+                    mode, image.is_file(), front_ready, first_display_at,
+                    time.monotonic(), demo_splash_requested())
+                if hdmi_source == 'splash':
+                    ensure('hdmi', 'display', splash_pipeline(image, mode))
+                elif hdmi_source == 'camera':
                     ensure('hdmi', 'display', display_pipeline(socket, size, fps, cameras['front'], mode))
                 else:
                     stop('hdmi')
                 write_json(root / 'video-status.json', {
-                    'at': time.monotonic(), 'display_mode': mode, 'pip': False,
+                    'at': time.monotonic(), 'display_mode': mode, 'hdmi_source': hdmi_source, 'pip': False,
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
                                        **read_progress(child.heartbeat)} for name, child in children.items()}})
                 time.sleep(0.5)

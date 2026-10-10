@@ -1,9 +1,11 @@
 # Pi HDMI splash and on-demand demo
 
 `scripts/deploy-pi-demo-show.sh` installs the supplied Ashton Martin graphic
-as an aspect-correct HDMI splash. It is drawn once to the 16-bit framebuffer
-during video-console startup; the existing front-only native camera viewer
-takes over when ready. The splash does not alter camera capture or streams.
+as an aspect-correct HDMI splash. The early framebuffer draw is best-effort;
+the native HDMI worker also shows the image for at least three seconds after
+detecting the monitor and until the front camera is producing frames. It then
+switches to the front-only camera viewer. Camera captures and streaming
+publishers remain separate workers.
 
 Lights, horn, and DRS **never run on boot**. The separate
 `hpr-demo-show.service` listens for an explicit, non-retained MQTT request:
@@ -40,8 +42,18 @@ pulse cannot be restored to its exact remaining duration. There is no direct
 GPIO access in the demo listener. **The operator remains responsible for
 running the demo only when the trike is stationary and clear of people.**
 
-Deployment backs up replaced files and starts only the demo listener; it
-does not reboot or restart GPIO/video services. Roll back using the exact
+For an on-demand demo, the supplied image replaces only the HDMI worker's
+camera picture for the entire sequence; front/rear capture and RTSP publishers
+continue independently. The listener removes its display request when the
+show ends. A time-limited marker also releases the camera view if the listener
+dies unexpectedly. A connected monitor must show advancing splash frames
+before the light/horn/DRS choreography begins; otherwise the demo fails and
+restores its original modes.
+
+Deployment backs up replaced files and starts only the demo listener. If the
+native HDMI worker source changed, it restarts the video compositor once to
+load that source; this briefly reconnects the independent stream publishers.
+It does not reboot or restart GPIO. Roll back using the exact
 backup path printed by deployment:
 
 ```sh

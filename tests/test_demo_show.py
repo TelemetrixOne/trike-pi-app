@@ -62,6 +62,7 @@ class DemoShowTests(unittest.TestCase):
         }
         statuses = []
         commands = []
+        display_events = []
         show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
 
         def send(name, value):
@@ -83,7 +84,11 @@ class DemoShowTests(unittest.TestCase):
 
         show.send = send
         show.wait_until = lambda _start, _seconds: None
+        show.show_splash = lambda _request_id: display_events.append(("show", len(commands)))
+        show.wait_splash = lambda: None
+        show.clear_splash = lambda _request_id: display_events.append(("clear", len(commands)))
         show.play(str(uuid.uuid4()))
+        self.assertEqual(display_events, [("show", 0), ("clear", len(SHOW_CUES) + 2)])
         self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
         self.assertEqual(commands.count(("drs", "OPEN")), 2)
         self.assertEqual(commands.count(("horn", "ON")), 8)
@@ -124,6 +129,9 @@ class DemoShowTests(unittest.TestCase):
 
         show.send = send
         show.wait_until = lambda _start, _seconds: None
+        show.show_splash = lambda _request_id: None
+        show.wait_splash = lambda: None
+        show.clear_splash = lambda _request_id: None
         show.wait_state = lambda key, expected, timeout=2.0: (
             None if show.states.get(key) == expected else
             (_ for _ in ()).throw(RuntimeError(f"{key} did not acknowledge {expected}"))

@@ -12,6 +12,28 @@ spec.loader.exec_module(video)
 
 
 class NativeVideoTests(unittest.TestCase):
+    def test_demo_splash_marker_expires_and_uses_uncropped_hdmi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'hdmi-splash.json'
+            marker.write_text('{"expires_at": 123}')
+            self.assertTrue(video.demo_splash_requested(marker, now=100))
+            self.assertFalse(video.demo_splash_requested(marker, now=123))
+            marker.write_text('bad json')
+            self.assertFalse(video.demo_splash_requested(marker, now=100))
+        pipeline = video.splash_pipeline('/tmp/splash.png', (33, 800, 480))
+        self.assertIn('imagefreeze', pipeline)
+        self.assertIn('add-borders=true', pipeline)
+        self.assertIn('width=800,height=480', pipeline)
+        self.assertNotIn('crop', pipeline)
+
+    def test_hdmi_splash_covers_boot_and_demo_without_restarting_capture(self):
+        mode = (33, 800, 480)
+        self.assertEqual(video.choose_hdmi_source(mode, True, False, 100, 100, False), 'splash')
+        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 102, False), 'splash')
+        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 104, False), 'camera')
+        self.assertEqual(video.choose_hdmi_source(mode, True, True, 100, 120, True), 'splash')
+        self.assertEqual(video.choose_hdmi_source(None, True, True, 100, 120, True), None)
+
     def test_watchdog_detects_live_process_without_frame_progress(self):
         self.assertFalse(video.stalled(100, {}, 110))
         self.assertTrue(video.stalled(100, {}, 116))
@@ -65,6 +87,8 @@ class NativeVideoTests(unittest.TestCase):
                 self.description = description
                 self.process = SimpleNamespace(pid=len(started))
                 self.heartbeat = directory / (name + '.json')
+                if name.endswith('-capture'):
+                    video.write_json(self.heartbeat, {'at': video.time.monotonic(), 'frames': 1})
                 for path in video.re.findall(r'socket-path=("[^"]+")', description):
                     Path(video.json.loads(path)).touch()
 

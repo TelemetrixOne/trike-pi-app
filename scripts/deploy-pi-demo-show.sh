@@ -8,11 +8,15 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_ROOT="/opt/hpr/backups/demo-show-${STAMP}"
 
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
-for source in bin/hpr-video-splash.sh assets/startup-splash.png hpr_gateway/services/demo_show.py; do
+for source in bin/hpr-video-splash.sh bin/hpr-video-native.py assets/startup-splash.png hpr_gateway/services/demo_show.py; do
   [[ -f "${REPO_ROOT}/${source}" ]] || { echo "Missing ${source}" >&2; exit 1; }
 done
 bash -n "${REPO_ROOT}/bin/hpr-video-splash.sh"
+"/usr/bin/python3" -m py_compile "${REPO_ROOT}/bin/hpr-video-native.py"
 "${INSTALL_ROOT}/venv/bin/python" -m py_compile "${REPO_ROOT}/hpr_gateway/services/demo_show.py"
+for plugin in pngdec imagefreeze kmssink; do
+  gst-inspect-1.0 "$plugin" >/dev/null || { echo "Missing GStreamer plugin: $plugin" >&2; exit 1; }
+done
 PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" -m hpr_gateway.validate_config --config "$CONFIG_PATH"
 cfg() {
   PYTHONPATH="${INSTALL_ROOT}" "${INSTALL_ROOT}/venv/bin/python" -m hpr_gateway.config_value \
@@ -28,6 +32,7 @@ getent group "${SERVICE_GROUP}" >/dev/null
 install -d -m 0700 "$BACKUP_ROOT"
 for target in \
   "${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh" \
+  "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" \
   "${INSTALL_ROOT}/runtime/video/startup-splash.png" \
   "${INSTALL_ROOT}/hpr_gateway/services/startup_show.py" \
   "${INSTALL_ROOT}/hpr_gateway/services/demo_show.py" \
@@ -41,7 +46,13 @@ for target in \
   fi
 done
 
+NATIVE_CHANGED=false
+if ! cmp -s "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/runtime/video/hpr-video-native.py"; then
+  NATIVE_CHANGED=true
+  touch "${BACKUP_ROOT}/.native-updated"
+fi
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-splash.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-splash.sh"
+install -m 0755 "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/runtime/video/hpr-video-native.py"
 install -m 0644 "${REPO_ROOT}/assets/startup-splash.png" "${INSTALL_ROOT}/runtime/video/startup-splash.png"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/services/demo_show.py" "${INSTALL_ROOT}/hpr_gateway/services/demo_show.py"
 
@@ -97,6 +108,8 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+RuntimeDirectory=hpr-demo-show
+RuntimeDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
@@ -105,6 +118,10 @@ EOF
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/hpr-video-splash.service /etc/systemd/system/hpr-demo-show.service
 systemctl enable hpr-demo-show.service
+if [[ "$NATIVE_CHANGED" == true ]]; then
+  systemctl restart hpr-video-compositor.service
+  systemctl is-active --quiet hpr-video-compositor.service
+fi
 systemctl restart hpr-demo-show.service
 systemctl is-active --quiet hpr-demo-show.service
-echo "HDMI splash retained; on-demand demo listener started. GPIO and video services were not restarted. Backup: ${BACKUP_ROOT}"
+echo "HDMI splash and on-demand demo listener updated; video compositor restarted only if its native code changed. GPIO was not restarted. Backup: ${BACKUP_ROOT}"
