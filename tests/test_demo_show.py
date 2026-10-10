@@ -47,9 +47,11 @@ class DemoShowTests(unittest.TestCase):
             "drs/mode": "CLOSED", "input/drs_switch/state": "ON",
         }
         statuses = []
+        commands = []
         show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
 
         def send(name, value):
+            commands.append((name, value))
             if name == "horn":
                 show.states["horn/state"] = value
             elif name == "aux_lights":
@@ -66,6 +68,7 @@ class DemoShowTests(unittest.TestCase):
 
         show.send = send
         show.play(str(uuid.uuid4()))
+        self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
         self.assertEqual(statuses[-1], ("completed", None))
         self.assertEqual(show.states["horn/state"], "OFF")
         self.assertEqual(show.states["aux_lights/requested_state"], "ON")

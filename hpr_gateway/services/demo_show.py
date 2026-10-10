@@ -137,6 +137,13 @@ class DemoShow:
         self.status("running", request_id)
         failure = None
         try:
+            # Start with a short blackout so the lighting pattern has contrast.
+            # A physically forced-on circuit may remain lit despite its command.
+            self.send("aux_lights", "OFF")
+            self.wait_state("aux_lights/requested_state", "OFF")
+            self.send("headlight", "OFF")
+            self.wait_state("headlight/mode", "OFF")
+            time.sleep(0.5)
             for _ in range(2):
                 self.send("aux_lights", "ON")
                 self.wait_state("aux_lights/requested_state", "ON")

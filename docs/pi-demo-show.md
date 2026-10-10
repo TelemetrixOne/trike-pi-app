@@ -25,8 +25,9 @@ The Pi accepts a demo when it has complete GPIO state and the momentary horn
 is idle. It does not require GPS, stationary confirmation, or a particular
 physical-switch position. It snapshots the headlight mode/requested state,
 auxiliary-light requested state, and DRS mode. Lights and DRS modes can be
-temporarily overridden. It flashes existing auxiliary/headlights, plays
-a short-short-long fixed-pitch horn rhythm, opens then closes DRS, and restores
+temporarily overridden. It requests a brief blackout first (where physical
+switches permit), then flashes the auxiliary/headlights, plays a
+short-short-long fixed-pitch horn rhythm, opens then closes DRS, and restores
 the original headlight, auxiliary-light, and DRS modes. An error aborts the
 show and still runs restoration. A physical
 switch may continue to force an output, and an already-active momentary horn
