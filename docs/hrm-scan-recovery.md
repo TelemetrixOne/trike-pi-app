@@ -11,8 +11,8 @@ configured scan controller is UP. If it is DOWN, it first tries `hciconfig up`.
 If that times out, it resolves the controller's own USB parent from sysfs and
 briefly reauthorizes only that device. It does not reset the USB hub, GPS,
 cameras, or the GATT/telemetry controller. If Linux renumbers the recovered
-scan adapter, it restarts only `hpr-heart-rate.service` so the service resolves
-its current name. Recovery attempts are separated by at least two minutes and
+scan adapter, it restarts only `hpr-heart-rate.service` to clear stale BlueZ
+state even when Linux reuses the same hci number. Recovery attempts are separated by at least two minutes and
 limited to three per hour; repeated failure is logged for hardware review.
 Controller role resolution uses the basic HCI listing, avoiding verbose
 queries that can interfere with this dongle while scanning.

@@ -141,14 +141,15 @@ def wait_for_controller(config, previous_adapter: str, timeout_seconds: int = 20
     return False
 
 
-def recover(config, adapter: str, *, force_usb_reset: bool = False,
-            restart_hrm: bool = False) -> bool:
+def recover(config, adapter: str, *, force_usb_reset: bool = False) -> bool:
     if not force_usb_reset and power_up(adapter):
         LOG.info("Recovered %s without a USB reset", adapter)
         return True
     device = usb_device_for_adapter(adapter)
     reauthorize_usb_device(device)
-    if wait_for_controller(config, adapter, restart_hrm=restart_hrm):
+    # Any USB re-enumeration invalidates BlueZ scanner state, even when Linux
+    # reuses the same hci number. Restart only the HRM service in that case.
+    if wait_for_controller(config, adapter, restart_hrm=True):
         LOG.info("Recovered HRM scan controller after isolated USB reset")
         return True
     LOG.error("HRM scan controller did not recover after isolated USB reset")
@@ -196,8 +197,7 @@ def main() -> int:
                             adapter, "DOWN" if not is_up else "repeatedly failing discovery")
                 attempts.append(now)
                 next_attempt = now + RETRY_COOLDOWN_SECONDS
-                recover(config, adapter, force_usb_reset=is_up,
-                        restart_hrm=scan_failed)
+                recover(config, adapter, force_usb_reset=is_up)
                 if scan_health:
                     scan_health.clear()
             elif now >= next_attempt and len(attempts) >= MAX_USB_RESETS_PER_HOUR:

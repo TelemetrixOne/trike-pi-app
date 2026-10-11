@@ -4,23 +4,21 @@ hrm_multi_to_mqtt.py
 
 HPR Trike1 multi-HRM BLE -> MQTT publisher.
 
-v17: sequential single-adapter race handover state machine.
-
-This version deliberately removes the complicated live RSSI selector/connection
-interrupt behaviour from earlier versions.
+v18: separate continuous scan and GATT connection with stable rider handover.
 
 Race rule implemented:
 1. Scan known HRMs and rank them by strongest fresh RSSI.
-2. Stop scanning completely before starting a GATT connection.
-3. Connect to the strongest eligible HRM.
+2. Keep USB scanning while the onboard adapter connects to the strongest HRM.
+3. Compare live connection RSSI with fresh scanned rivals; hand over only when
+   a rival is consistently stronger by the configured margin.
 4. Give it HPR_HRM_CANDIDATE_BPM_PROVE_SEC to produce valid non-zero BPM.
 5. If it succeeds, publish its rider identity and keep it active.
 6. If valid BPM is lost for HPR_HRM_HEARTBEAT_LOST_SEC, publish "-" and release it.
 7. If a candidate fails, suppress it briefly and resume scanning.
 
-BLE scanning and the active GATT connection never overlap. This permits one
-adapter to be dedicated to HRM work while the second adapter remains available
-for TPMS, pedals, derailleur, and other trike services.
+BLE scanning and the active GATT connection overlap on different controllers.
+The onboard controller remains shared with TPMS, pedals and derailleur under
+their existing connection-locking architecture.
 
 Important limitation:
 If a removed/unworn HRM continues to send plausible non-zero BPM, there is no
@@ -32,7 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import signal
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
@@ -103,6 +103,11 @@ ONLY_ON_CHANGE = True
 
 NO_BPM_PAYLOAD = "-"
 RECONNECT_DELAY_SEC = 2.0
+HANDOVER_MARGIN_DB = 8
+HANDOVER_CONFIRM_SEC = 6.0
+HANDOVER_MIN_ACTIVE_SEC = 10.0
+HANDOVER_COOLDOWN_SEC = 20.0
+RSSI_POLL_SEC = 2.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,8 @@ def configure(config: HprConfig) -> None:
     global SUPPRESS_NO_BPM_SEC, SUPPRESS_FIND_FAIL_SEC, SUPPRESS_CONNECTION_ERROR_SEC
     global FIND_TIMEOUT_SEC, CONNECT_TIMEOUT_SEC, BPM_MIN, BPM_MAX
     global PUBLISH_MIN_INTERVAL, ONLY_ON_CHANGE, NO_BPM_PAYLOAD, RECONNECT_DELAY_SEC
+    global HANDOVER_MARGIN_DB, HANDOVER_CONFIRM_SEC, HANDOVER_MIN_ACTIVE_SEC
+    global HANDOVER_COOLDOWN_SEC, RSSI_POLL_SEC
     global KNOWN_HRMS, LABEL_BY_MAC, NUMBER_BY_MAC, DEVICE_NAME_BY_MAC
     global RIDER_BY_MAC, KNOWN_MACS
 
@@ -176,6 +183,11 @@ def configure(config: HprConfig) -> None:
     ONLY_ON_CHANGE = bool(hr.get("only_on_change", True))
     NO_BPM_PAYLOAD = str(hr.get("no_bpm_payload", "-"))
     RECONNECT_DELAY_SEC = float(hr.get("reconnect_delay_seconds", 2.0))
+    HANDOVER_MARGIN_DB = max(1, int(hr.get("handover_margin_db", 8)))
+    HANDOVER_CONFIRM_SEC = max(1.0, float(hr.get("handover_confirm_seconds", 6.0)))
+    HANDOVER_MIN_ACTIVE_SEC = max(1.0, float(hr.get("handover_min_active_seconds", 10.0)))
+    HANDOVER_COOLDOWN_SEC = max(1.0, float(hr.get("handover_cooldown_seconds", 20.0)))
+    RSSI_POLL_SEC = max(0.5, float(hr.get("rssi_poll_seconds", 2.0)))
 
     KNOWN_HRMS = []
     RIDER_BY_MAC = {}
@@ -223,6 +235,7 @@ suppress_reason_by_mac: Dict[str, str] = {}
 selected_mac: Optional[str] = None
 selected_rssi: Optional[int] = None
 active_mac: Optional[str] = None
+handover_cooldown_until: float = 0.0
 last_valid_bpm_time: Optional[float] = None
 last_pub_time: float = 0.0
 last_pub_bpm: Optional[int] = None
@@ -357,7 +370,83 @@ def rssi_for_mac(mac: Optional[str]) -> Optional[int]:
     c = seen.get(mac.upper())
     if not c:
         return None
+    if now() - c.last_seen > SELECTION_FRESH_SEC:
+        return None
     return c.rssi
+
+
+_LE_CONNECTION = re.compile(
+    r"\bLE\s+([0-9A-F:]{17})\s+handle\s+(\d+)\s+state\s+1\b", re.IGNORECASE
+)
+
+
+def connection_handle_for_mac(output: str, mac: str) -> Optional[int]:
+    for match in _LE_CONNECTION.finditer(output):
+        if match.group(1).upper() == mac.upper():
+            return int(match.group(2))
+    return None
+
+
+def parse_read_rssi(output: str, handle: int) -> Optional[int]:
+    match = re.search(r"> HCI Event: 0x0e[^\n]*\n\s*([0-9A-Fa-f ]+)", output)
+    if not match:
+        return None
+    try:
+        payload = bytes.fromhex(match.group(1))
+    except ValueError:
+        return None
+    if (len(payload) < 7 or payload[:4] != bytes((1, 5, 20, 0))
+            or int.from_bytes(payload[4:6], "little") != handle):
+        return None
+    value = payload[6] if payload[6] < 128 else payload[6] - 256
+    return value if -127 <= value <= 20 else None
+
+
+def read_connection_rssi(adapter: str, mac: str) -> Optional[int]:
+    """Read the live LE link RSSI without scanning on the GATT controller."""
+    try:
+        connections = subprocess.run(
+            ["hcitool", "-i", adapter, "con"], capture_output=True, text=True,
+            timeout=3, check=True,
+        ).stdout
+        handle = connection_handle_for_mac(connections, mac)
+        if handle is None:
+            return None
+        response = subprocess.run(
+            ["hcitool", "-i", adapter, "cmd", "0x05", "0x0005",
+             f"0x{handle & 255:02x}", f"0x{handle >> 8:02x}"],
+            capture_output=True, text=True, timeout=3, check=True,
+        ).stdout
+        return parse_read_rssi(response, handle)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+
+def stronger_challenger(active: str, active_rssi: Optional[int]) -> Optional[SeenCandidate]:
+    if active_rssi is None:
+        return None
+    for candidate in fresh_candidates():
+        if candidate.mac != active.upper() and candidate.rssi >= active_rssi + HANDOVER_MARGIN_DB:
+            return candidate
+    return None
+
+
+@dataclass
+class HandoverTracker:
+    candidate_mac: Optional[str] = None
+    since: float = 0.0
+
+    def observe(self, candidate: Optional[SeenCandidate], allowed: bool, timestamp: float) -> Optional[str]:
+        if not allowed or candidate is None:
+            self.candidate_mac = None
+            return None
+        if candidate.mac != self.candidate_mac:
+            self.candidate_mac = candidate.mac
+            self.since = timestamp
+            return None
+        if timestamp - self.since >= HANDOVER_CONFIRM_SEC:
+            return candidate.mac
+        return None
 
 
 def mqtt_connect() -> mqtt.Client:
@@ -435,7 +524,8 @@ def publish_bpm(
 
     t = now()
     last_valid_bpm_time = t
-    selected_rssi = rssi_for_mac(mac) or selected_rssi
+    if active_mac != mac:
+        selected_rssi = rssi_for_mac(mac) or selected_rssi
 
     if (t - last_pub_time) < PUBLISH_MIN_INTERVAL:
         return
@@ -503,8 +593,8 @@ def candidates_json_payload() -> str:
 # Async tasks
 # =========================
 
-async def scan_for_candidates(mqttc: mqtt.Client) -> None:
-    """Run one bounded scan and return only after BlueZ discovery has stopped."""
+async def scanner_task(mqttc: mqtt.Client, scanner_ready: asyncio.Event) -> None:
+    """Keep the dedicated USB controller scanning across active GATT sessions."""
 
     def cb(device, adv) -> None:
         mac = (getattr(device, "address", "") or "").upper()
@@ -515,47 +605,47 @@ async def scan_for_candidates(mqttc: mqtt.Client) -> None:
         if rssi is None:
             return
 
+        previous = seen.get(mac)
+        smoothed_rssi = (
+            round(0.6 * previous.rssi + 0.4 * rssi)
+            if previous and now() - previous.last_seen <= SELECTION_FRESH_SEC else rssi
+        )
         seen[mac] = SeenCandidate(
             mac=mac,
             label=LABEL_BY_MAC[mac],
             name=get_name(device, adv),
-            rssi=rssi,
+            rssi=smoothed_rssi,
             last_seen=now(),
             device=device,
         )
 
-    seen.clear()
-    scanner = BleakScanner(cb, adapter=SCAN_ADAPTER)
-    mqttc.publish(
-        TOPIC_STATUS,
-        payload=f"scanner_starting:{SCAN_ADAPTER}:window={SCAN_CYCLE_SEC}s",
-        qos=0,
-        retain=False,
-    )
-
-    try:
-        await asyncio.wait_for(scanner.start(), timeout=CONNECT_TIMEOUT_SEC)
-        deadline = now() + SCAN_CYCLE_SEC
-        while not StopFlag.stop and now() < deadline:
-            await asyncio.sleep(0.25)
-    finally:
+    while not StopFlag.stop:
+        scanner = None
+        mqttc.publish(TOPIC_STATUS, payload=f"scanner_starting:{SCAN_ADAPTER}", qos=0, retain=False)
         try:
-            await asyncio.wait_for(scanner.stop(), timeout=CONNECT_TIMEOUT_SEC)
-        except Exception as e:
-            mqttc.publish(
-                TOPIC_STATUS,
-                payload=f"scanner_stop_error:{type(e).__name__}:{e}",
-                qos=0,
-                retain=False,
-            )
-
-    mqttc.publish(
-        TOPIC_STATUS,
-        payload=f"scanner_stopped:{SCAN_ADAPTER}:candidates={len(fresh_candidates())}",
-        qos=0,
-        retain=False,
-    )
-    await asyncio.sleep(BLE_SETTLE_SEC)
+            scanner = BleakScanner(cb, adapter=SCAN_ADAPTER)
+            await asyncio.wait_for(scanner.start(), timeout=CONNECT_TIMEOUT_SEC)
+            scanner_ready.set()
+            mqttc.publish(TOPIC_STATUS, payload=f"scanner_running:{SCAN_ADAPTER}", qos=0, retain=False)
+            while not StopFlag.stop:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            mqttc.publish(TOPIC_STATUS,
+                          payload=f"scanner_error:{type(exc).__name__}:{exc}",
+                          qos=0, retain=False)
+        finally:
+            scanner_ready.clear()
+            if scanner is not None:
+                try:
+                    await asyncio.wait_for(scanner.stop(), timeout=CONNECT_TIMEOUT_SEC)
+                except Exception as exc:
+                    mqttc.publish(TOPIC_STATUS,
+                                  payload=f"scanner_stop_error:{type(exc).__name__}:{exc}",
+                                  qos=0, retain=False)
+            seen.clear()
+        await asyncio.sleep(RECONNECT_DELAY_SEC)
 
 
 async def candidates_debug_task(mqttc: mqtt.Client) -> None:
@@ -571,14 +661,13 @@ async def candidates_debug_task(mqttc: mqtt.Client) -> None:
         await asyncio.sleep(2.0)
 
 
-async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
+async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool | str:
     """
-    Try one HRM. Return True only after the HRM has connected and produced
-    valid non-zero BPM. Once True, this coroutine stays in the active monitoring
-    loop until heartbeat is lost, the device disconnects, or shutdown is requested.
-    It then returns False so the manager searches again.
+    Try one HRM. Stay connected after valid BPM; return a stronger rider's MAC
+    only after a confirmed handover, otherwise return False to search again.
     """
     global active_mac, last_valid_bpm_time, last_pub_time, last_pub_bpm
+    global selected_rssi, handover_cooldown_until
 
     mac = mac.upper()
     client: Optional[BleakClient] = None
@@ -698,7 +787,12 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
             suppress_hrm(mac, SUPPRESS_CONNECTION_ERROR_SEC, "disconnect_before_valid_bpm")
             return False
 
-        # Active monitoring loop. Scanning stays off while valid BPM is fresh.
+        # USB discovery continues independently while the onboard GATT link
+        # remains active. Compare its live RSSI with fresh scanned rivals.
+        active_started = now()
+        last_rssi_poll = 0.0
+        active_link_rssi: Optional[int] = None
+        handover_tracker = HandoverTracker()
         while not StopFlag.stop and client.is_connected:
             if last_valid_bpm_time is None:
                 elapsed = now() - prove_start
@@ -715,6 +809,32 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
                 publish_no_bpm(mqttc, f"heartbeat_lost:{mac}", force=True)
                 suppress_hrm(mac, SUPPRESS_NO_BPM_SEC, "heartbeat_lost")
                 return False
+
+            current_time = now()
+            if current_time - last_rssi_poll >= RSSI_POLL_SEC:
+                last_rssi_poll = current_time
+                active_link_rssi = await asyncio.to_thread(read_connection_rssi, ACTIVE_ADAPTER, mac)
+                if active_link_rssi is not None:
+                    selected_rssi = active_link_rssi
+                    mqttc.publish(TOPIC_SELECTED_RSSI, payload=str(active_link_rssi), qos=0, retain=True)
+
+            challenger = stronger_challenger(mac, active_link_rssi)
+            target = handover_tracker.observe(
+                challenger,
+                current_time - active_started >= HANDOVER_MIN_ACTIVE_SEC
+                and current_time >= handover_cooldown_until,
+                current_time,
+            )
+            if target and challenger:
+                mqttc.publish(
+                    TOPIC_STATUS,
+                    payload=(f"handover:{mac}:{active_link_rssi}:to={target}:"
+                             f"rssi={challenger.rssi}"),
+                    qos=0, retain=False,
+                )
+                publish_no_bpm(mqttc, f"handover:{mac}:to:{target}", force=True)
+                handover_cooldown_until = current_time + HANDOVER_COOLDOWN_SEC
+                return target
 
             await asyncio.sleep(0.5)
 
@@ -748,28 +868,30 @@ async def connect_and_validate_candidate(mqttc: mqtt.Client, mac: str) -> bool:
         await asyncio.sleep(BLE_SETTLE_SEC)
 
 
-async def manager_task(mqttc: mqtt.Client) -> None:
+async def manager_task(mqttc: mqtt.Client, scanner_ready: asyncio.Event) -> None:
+    await scanner_ready.wait()
+    await asyncio.sleep(SCAN_CYCLE_SEC)
+    preferred_mac: Optional[str] = None
     while not StopFlag.stop:
         publish_selected(mqttc, None)
-        try:
-            await scan_for_candidates(mqttc)
-        except Exception as e:
-            mqttc.publish(
-                TOPIC_STATUS,
-                payload=f"scanner_error:{type(e).__name__}:{e}",
-                qos=0,
-                retain=False,
-            )
-            publish_no_bpm(mqttc, f"scanner_error:{type(e).__name__}")
+        if not scanner_ready.is_set():
+            publish_no_bpm(mqttc, "scanner_unavailable")
             await asyncio.sleep(RECONNECT_DELAY_SEC)
             continue
 
         candidates = fresh_candidates()
 
+        if preferred_mac:
+            preferred = next((item for item in candidates if item.mac == preferred_mac), None)
+            preferred_mac = None
+            if preferred:
+                candidates.remove(preferred)
+                candidates.insert(0, preferred)
+
         if not candidates:
             mqttc.publish(TOPIC_STATUS, payload="waiting_for_hrm_candidate", qos=0, retain=False)
             publish_no_bpm(mqttc, "waiting_for_hrm_candidate")
-            await asyncio.sleep(RECONNECT_DELAY_SEC)
+            await asyncio.sleep(SCAN_CYCLE_SEC)
             continue
 
         # Try candidates in current strongest-RSSI order.
@@ -789,10 +911,11 @@ async def manager_task(mqttc: mqtt.Client) -> None:
                 retain=False,
             )
 
-            await connect_and_validate_candidate(mqttc, candidate.mac)
+            outcome = await connect_and_validate_candidate(mqttc, candidate.mac)
+            if isinstance(outcome, str):
+                preferred_mac = outcome
 
-            # After each candidate attempt or active session ends, run a fresh
-            # bounded scan rather than continuing an old candidate list.
+            # The USB scanner keeps running through this connection and handover.
             break
 
         if not tried_any:
@@ -807,12 +930,14 @@ async def main() -> None:
     signal.signal(signal.SIGTERM, _sig_handler)
 
     mqttc = mqtt_connect()
-    mqttc.publish(TOPIC_STATUS, payload="multi_hrm_v17_starting", qos=1, retain=True)
-    mqttc.publish(TOPIC_JSON, payload=json.dumps({"event": "multi_hrm_v17_starting", "ts": now()}), qos=0, retain=False)
+    mqttc.publish(TOPIC_STATUS, payload="multi_hrm_v18_starting", qos=1, retain=True)
+    mqttc.publish(TOPIC_JSON, payload=json.dumps({"event": "multi_hrm_v18_starting", "ts": now()}), qos=0, retain=False)
 
+    scanner_ready = asyncio.Event()
     tasks = [
+        asyncio.create_task(scanner_task(mqttc, scanner_ready)),
         asyncio.create_task(candidates_debug_task(mqttc)),
-        asyncio.create_task(manager_task(mqttc)),
+        asyncio.create_task(manager_task(mqttc, scanner_ready)),
     ]
 
     try:
