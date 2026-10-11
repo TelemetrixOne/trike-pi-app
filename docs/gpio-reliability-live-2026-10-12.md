@@ -72,3 +72,48 @@ The operator is not in front of the trike. Physical light/horn/DRS observations,
 switch operation and controlled shade/light tests must be completed later.
 Remote post-deployment performance and service checks are recorded separately
 below when complete. Electrical/software checks do not certify physical motion.
+
+## Recorded deployment and remote checks
+
+Code commit `c1e375f` was pushed to GitHub main before deployment. The scoped
+deployment completed at approximately 10:08 AEDT. Backup:
+`/opt/hpr/backups/gpio-reliability-20261011T230813Z`. Both installed module hashes
+matched the committed source afterward. `/etc/hpr/hpr.yaml` was byte-identical
+to its backup after the three service restarts and acknowledgement checks.
+
+The first 30-second steady sample measured GPIO at 2.9% of one core, compared
+with 59.9% before deployment. None of the old GPIO edge IRQ subscriptions
+remained. ADC readings and five-second pin evidence were fresh. GPIO reported
+no pin readback errors and had zero automatic restarts.
+
+All six fresh command acknowledgements passed without changing physical output
+states: headlight OFF then restored AUTO, auxiliary lights OFF, demister OFF,
+horn OFF and duplicate DRS RIDER_CONTROL. Round-trip acknowledgement times were
+150.5, 199.9, 194.5, 171.0, 199.2 and 214.4 ms respectively. The repeated DRS
+request did not reassert PWM; GPIO12 remained an input after release. DRS now
+reports mode RIDER_CONTROL, source LOCAL and position OPEN, matching the current
+grounded/active switch interpretation and the central startup mode.
+
+The GPIO tests also passed on the Pi: 18 tests using mock pins, with no real
+actuation. Repository gateway validation passed GPIO, ADC/config, GPS service
+and receiver presence, BLE role separation/services, pedals, TPMS, derailleur,
+both camera workers, video progress and native HDMI services. It still flags
+the existing `/dev/fb0` check even though native KMS validation passes. These
+checks do not prove worn-rider sensor reception or the physical monitor image.
+
+Unresolved feedback discrepancy: all three load feedback inputs currently
+report ON while the headlight, auxiliary and demister output commands are OFF.
+GPIO5 is low and GPIO24/25 are high, matching the central output polarities for
+OFF. GPIO27 is low (configured active-low), while GPIO22/23 are high (configured
+active-high), which explains their reported ON states. This requires a physical
+load/voltage/polarity check; no configuration was inverted just to make status
+look correct. Visual/audible component tests and physical switch changes remain
+pending because the operator cannot currently observe the trike.
+
+A subsequent uninterrupted two-minute idle test averaged 2.92% of one core;
+the four 30-second windows measured 2.93%, 2.90%, 2.87% and 3.00%. All input,
+output-state and mode topics had only their initial retained delivery, with no
+ongoing state chatter. Exactly 24 GPIO evidence messages arrived at the intended
+five-second cadence. The ADC remained online with fresh readings, the GPIO PID
+remained unchanged and automatic restart count stayed zero. The three affected
+services are enabled at boot. No GPIO edge IRQ subscriptions returned.

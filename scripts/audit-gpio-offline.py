@@ -42,8 +42,7 @@ def idle_auto_activity():
     for _ in range(300):
         service._apply_logic(runtime, publish=False)
     return {"unchanged_logic_evaluations": 300, "output_on_calls": output.on.call_count,
-            "state_publications": service._publish_runtime.call_count,
-            "nominal_duration_at_default_poll_seconds": 60}
+            "state_publications": service._publish_runtime.call_count}
 
 
 def duplicate_drs_activity():
@@ -81,26 +80,41 @@ def adc_busy_wait():
     # Call the installed driver's real read algorithm against a simulated ADC.
     # Completion is deliberately released after 50 ms so the audit always ends.
     from adafruit_ads1x15.ads1x15 import ADS1x15, Mode
-    polls = 0
-    started = time.perf_counter()
-    cpu_started = time.process_time()
+    class FakeDriver:
+        mode = Mode.SINGLE
+        _last_pin_read = None
+        _read = ADS1x15._read
 
-    def complete():
-        nonlocal polls
-        polls += 1
-        return time.perf_counter() - started >= 0.05
+        def __init__(self):
+            self.polls = 0
+            self.started = time.perf_counter()
 
-    device = SimpleNamespace(mode=Mode.SINGLE, _last_pin_read=None,
-                             _write_config=lambda _pin: None,
-                             _conversion_complete=complete,
-                             get_last_result=lambda _fast: 1,
-                             _conversion_value=lambda value: value)
-    ADS1x15._read(device, 0)
+        def _write_config(self, _pin):
+            pass
+
+        def _conversion_complete(self):
+            self.polls += 1
+            return time.perf_counter() - self.started >= 0.05
+
+        def get_last_result(self, _fast):
+            return 1
+
+        def _conversion_value(self, value):
+            return value
+
+    class BoundedDriver(gpio.BoundedConversionMixin, FakeDriver):
+        pass
+
+    rows = {}
+    for name, driver in (("library_default", FakeDriver), ("gpio_bounded_driver", BoundedDriver)):
+        device = driver()
+        cpu_started = time.process_time()
+        device._read(0)
+        rows[name] = {"fake_conversion_wall_seconds": round(time.perf_counter() - device.started, 4),
+                      "process_cpu_seconds": round(time.process_time() - cpu_started, 4),
+                      "conversion_status_polls": device.polls}
     return {"driver_version": importlib.metadata.version("adafruit-circuitpython-ads1x15"),
-            "fake_conversion_wall_seconds": round(time.perf_counter() - started, 4),
-            "process_cpu_seconds": round(time.process_time() - cpu_started, 4),
-            "conversion_status_polls": polls,
-            "note": "Fake I2C has no bus delay; poll count is not a measured Pi I2C rate."}
+            **rows, "note": "Fake I2C has no bus delay; this is not a measured Pi I2C rate."}
 
 
 def timing_validation():
@@ -119,8 +133,17 @@ def disconnected_mqtt_queue():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="offline-audit-only")
     for _ in range(1000):
         client.publish("offline-audit/state", "ON", qos=1, retain=True)
-    return {"network_connect_called": False, "configured_queue_limit": client.max_queued_messages,
-            "pending_messages_after_1000_disconnected_publishes": len(client._out_messages)}
+    guarded_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="offline-guarded-audit")
+    guarded_client.max_queued_messages_set(128)
+    service = object.__new__(gpio.GPIOControlService)
+    service._client = guarded_client
+    service._mqtt_connected = False
+    for _ in range(1000):
+        service._publish("offline-audit/state", "ON")
+    return {"network_connect_called": False,
+            "library_default_pending_messages": len(client._out_messages),
+            "gpio_guarded_pending_messages": len(guarded_client._out_messages),
+            "gpio_queue_limit": guarded_client.max_queued_messages}
 
 
 def competing_profiles():
