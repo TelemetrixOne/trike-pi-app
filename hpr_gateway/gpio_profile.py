@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 
 
@@ -15,6 +16,18 @@ def validate_gpio(gpio, *, strict=False):
         raise ValueError("gpio must be a mapping")
     if gpio.get("numbering", "BCM") != "BCM":
         raise ValueError("gpio.numbering must be BCM")
+    for section, field, minimum, maximum in (
+        ("service", "poll_interval_seconds", 0.01, 1.0),
+        ("telemetry", "sample_interval_seconds", 0.1, 60.0),
+        ("telemetry", "retry_interval_seconds", 1.0, 300.0),
+    ):
+        value = (gpio.get(section) or {}).get(field)
+        if value is not None and (type(value) not in (int, float) or
+                                  not math.isfinite(value) or not minimum <= value <= maximum):
+            raise ValueError(f"gpio.{section}.{field} must be from {minimum} to {maximum} seconds")
+    average = (gpio.get("telemetry") or {}).get("moving_average_samples", 5)
+    if type(average) is not int or not 1 <= average <= 100:
+        raise ValueError("gpio.telemetry.moving_average_samples must be an integer from 1 to 100")
     used = {}
 
     def pin(value, path):

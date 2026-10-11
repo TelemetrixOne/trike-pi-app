@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from gpiozero import Device
 from gpiozero import OutputDevice
@@ -26,9 +26,13 @@ class GpioInputTests(unittest.TestCase):
             self.assertEqual(button.pin.pull, "up")
             self.assertEqual(self.service._sense_input_state(runtime), "OFF")
             button.pin.drive_low()
-            self.assertEqual(self.service._sense_input_state(runtime), "ON")
+            self.service._sense_input_state(runtime)
+            with patch.object(gpio_control.time, "monotonic", return_value=button._candidate_since + 0.06):
+                self.assertEqual(self.service._sense_input_state(runtime), "ON")
             button.pin.drive_high()
-            self.assertEqual(self.service._sense_input_state(runtime), "OFF")
+            self.service._sense_input_state(runtime)
+            with patch.object(gpio_control.time, "monotonic", return_value=button._candidate_since + 0.06):
+                self.assertEqual(self.service._sense_input_state(runtime), "OFF")
 
     def test_gpio_evidence_reads_pins_without_actuating_them(self):
         output = OutputDevice(17, initial_value=False)
@@ -53,9 +57,13 @@ class GpioInputTests(unittest.TestCase):
             runtime = SenseInputRuntime(config, button)
             self.assertEqual(button.pin.pull, "floating")
             button.pin.drive_low()
-            self.assertEqual(self.service._sense_input_state(runtime), "OFF")
+            self.service._sense_input_state(runtime)
+            with patch.object(gpio_control.time, "monotonic", return_value=button._candidate_since + 0.06):
+                self.assertEqual(self.service._sense_input_state(runtime), "OFF")
             button.pin.drive_high()
-            self.assertEqual(self.service._sense_input_state(runtime), "ON")
+            self.service._sense_input_state(runtime)
+            with patch.object(gpio_control.time, "monotonic", return_value=button._candidate_since + 0.06):
+                self.assertEqual(self.service._sense_input_state(runtime), "ON")
 
     def test_headlight_auto_poll_only_publishes_effective_changes(self):
         config = CircuitConfig("trike1", "headlight", "Headlight", "", 5, "AUTO", True,
@@ -80,11 +88,11 @@ class GpioInputTests(unittest.TestCase):
         original_mqtt = gpio_control.MQTT
         gpio_control.MQTT = {"topic_root": "hpr"}
         try:
-            self.service._on_message(None, None, Mock(topic="hpr/trike1/control/headlight/set",
+            self.service._handle_message(Mock(topic="hpr/trike1/control/headlight/set",
                                                        payload=b"AUTO", retain=True))
             self.assertEqual(runtime.mode, "OFF")
             self.service._apply_logic.assert_not_called()
-            self.service._on_message(None, None, Mock(topic="hpr/trike1/control/headlight/set",
+            self.service._handle_message(Mock(topic="hpr/trike1/control/headlight/set",
                                                        payload=b"ON", retain=False))
             self.assertEqual(runtime.mode, "ON")
             self.service._apply_logic.assert_called_once_with(runtime, publish=True)
@@ -117,7 +125,7 @@ class GpioInputTests(unittest.TestCase):
         try:
             for payload, expected in ((b"OPEN", "OPEN"), (b"CLOSED", "CLOSED"),
                                       (b"RIDER_CONTROL", "RIDER_CONTROL"), (b"CLOSE", "CLOSED")):
-                self.service._on_message(None, None, Mock(topic="hpr/trike1/control/drs/set", payload=payload))
+                self.service._handle_message(Mock(topic="hpr/trike1/control/drs/set", payload=payload, retain=False))
                 self.service._set_drs_mode.assert_called_with(expected)
         finally:
             gpio_control.DRS = original_drs

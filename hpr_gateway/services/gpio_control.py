@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import signal
 import socket
 import sys
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from typing import Deque, Dict, Optional
 
 import paho.mqtt.client as mqtt
-from gpiozero import Button, OutputDevice, PWMOutputDevice
+from gpiozero import InputDevice, OutputDevice, PWMOutputDevice
 
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
 
@@ -85,7 +86,7 @@ def configure(config: HprConfig) -> None:
         "discovery_enabled": bool(service.get("discovery_enabled", True)),
         "publish_discovery_on_start": bool(service.get("publish_discovery_on_start", True)),
         "republish_state_on_reconnect": bool(service.get("republish_state_on_reconnect", True)),
-        "poll_interval_seconds": float(service.get("poll_interval_seconds", 0.2)),
+        "poll_interval_seconds": float(service.get("poll_interval_seconds", 0.02)),
         "log_level": str(config.get("logging.level", "INFO")),
     }
     TELEMETRY = {
@@ -201,13 +202,35 @@ class CircuitConfig:
     auto_off_above_pct: Optional[float] = None
 
 
+class PolledInput(InputDevice):
+    """Sample and debounce inputs without requesting kernel edge interrupts."""
+
+    def __init__(self, *args, debounce_seconds=0.05, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stable_pressed = bool(self.is_active)
+        self._candidate_pressed = self._stable_pressed
+        self._candidate_since = time.monotonic()
+        self._debounce_seconds = debounce_seconds
+
+    @property
+    def is_pressed(self):
+        pressed = bool(self.is_active)
+        now = time.monotonic()
+        if pressed != self._candidate_pressed:
+            self._candidate_pressed = pressed
+            self._candidate_since = now
+        elif now - self._candidate_since >= self._debounce_seconds:
+            self._stable_pressed = pressed
+        return self._stable_pressed
+
+
 @dataclass
 class CircuitRuntime:
     config: CircuitConfig
     output: OutputDevice
-    switch: Optional[Button]
-    switch_on: Optional[Button]
-    switch_auto: Optional[Button]
+    switch: Optional[PolledInput]
+    switch_on: Optional[PolledInput]
+    switch_auto: Optional[PolledInput]
     requested_state: str
     effective_state: str
     source: str
@@ -215,6 +238,8 @@ class CircuitRuntime:
     remote_pulse_until_monotonic: Optional[float] = None
     ambient_candidate_state: Optional[str] = None
     ambient_candidate_since_monotonic: Optional[float] = None
+    last_switch_state: Optional[str] = None
+    auto_latched_on: bool = False
 
 
 @dataclass
@@ -231,6 +256,9 @@ class DRSRuntime:
     last_switch_state: Optional[str] = None
     auto_latched_on: bool = False
     pulse_release_at_monotonic: Optional[float] = None
+    transition_start_pulse_us: Optional[float] = None
+    transition_target_pulse_us: Optional[float] = None
+    transition_started_monotonic: Optional[float] = None
 
 
 @dataclass
@@ -248,8 +276,24 @@ class SenseInputConfig:
 @dataclass
 class SenseInputRuntime:
     config: SenseInputConfig
-    button: Button
+    button: PolledInput
     last_state: Optional[str] = None
+
+
+class BoundedConversionMixin:
+    """Bound the ADS driver readiness loop and yield between status reads."""
+
+    def _read(self, pin):
+        self._conversion_deadline = time.monotonic() + 0.1
+        return super()._read(pin)
+
+    def _conversion_complete(self):
+        complete = super()._conversion_complete()
+        if not complete:
+            if time.monotonic() >= self._conversion_deadline:
+                raise TimeoutError("ADS1115 conversion exceeded 100 ms")
+            time.sleep(0.002)
+        return complete
 
 
 class TelemetryMonitor:
@@ -280,6 +324,10 @@ class TelemetryMonitor:
         self._remaining_ah = float(ADC["battery_capacity_ah"])
         self._last_published: Dict[str, str] = {}
         self._last_init_error: Optional[str] = None
+        self._i2c = None
+        self._worker = None
+        self._stopping = threading.Event()
+        self._last_sample_monotonic = None
 
     @property
     def enabled(self) -> bool:
@@ -351,14 +399,30 @@ class TelemetryMonitor:
         return f"{MQTT['topic_root']}/{TELEMETRY['trike']}/control/telemetry"
 
     def latest_light_percent(self) -> Optional[float]:
-        if not self._light_samples:
+        if not self._light_samples or not self._sample_fresh():
             return None
         return sum(self._light_samples) / len(self._light_samples)
 
     def latest_light_voltage(self) -> Optional[float]:
-        if not self._light_voltage_samples:
+        if not self._light_voltage_samples or not self._sample_fresh():
             return None
         return sum(self._light_voltage_samples) / len(self._light_voltage_samples)
+
+    def _sample_fresh(self) -> bool:
+        return (self._hardware_ready and self._last_sample_monotonic is not None and
+                time.monotonic() - self._last_sample_monotonic <= max(3.0, self._sample_interval_sec * 3))
+
+    def publish_latest(self) -> None:
+        if self._sample_fresh():
+            for key, payload in dict(self._last_published).items():
+                self._publish(f"{self._topic_root()}/{key}", payload)
+
+    def health_snapshot(self) -> dict:
+        age = (time.monotonic() - self._last_sample_monotonic
+               if self._last_sample_monotonic is not None else None)
+        return {"state": "disabled" if not self._enabled else "online" if self._sample_fresh() else "stale",
+                "sample_age_seconds": round(age, 2) if age is not None else None,
+                "error": self._last_init_error}
 
     def _publish_discovery(self) -> None:
         if not self._enabled or not SERVICE["discovery_enabled"]:
@@ -407,7 +471,25 @@ class TelemetryMonitor:
             LOG.info("Telemetry disabled in config")
             return
         self._publish_discovery()
-        self._try_initialise(force=True)
+        self._worker = threading.Thread(target=self._run, name="gpio-adc", daemon=True)
+        self._worker.start()
+
+    def _run(self) -> None:
+        try:
+            self._try_initialise(force=True)
+            while not self._stopping.is_set():
+                self.tick()
+                self._stopping.wait(0.05)
+        finally:
+            self._close_hardware()
+
+    def _close_hardware(self) -> None:
+        if self._i2c is not None:
+            try:
+                self._i2c.deinit()
+            except Exception:
+                LOG.debug("ADC I2C cleanup failed", exc_info=True)
+            self._i2c = None
 
     def _try_initialise(self, force: bool = False) -> None:
         if not self._enabled:
@@ -417,6 +499,7 @@ class TelemetryMonitor:
         if not force and (now - self._last_attempt_monotonic) < self._retry_interval_sec:
             return
         self._last_attempt_monotonic = now
+        self._close_hardware()
 
         try:
             import board  # type: ignore
@@ -424,8 +507,12 @@ class TelemetryMonitor:
             import adafruit_ads1x15.ads1115 as ADS  # type: ignore
             from adafruit_ads1x15.analog_in import AnalogIn  # type: ignore
 
+            class BoundedADS1115(BoundedConversionMixin, ADS.ADS1115):
+                pass
+
             i2c = busio.I2C(board.SCL, board.SDA)
-            ads = ADS.ADS1115(
+            self._i2c = i2c
+            ads = BoundedADS1115(
                 i2c,
                 address=int(ADC["i2c_address"], 0) if isinstance(ADC["i2c_address"], str) else int(ADC["i2c_address"]),
             )
@@ -458,6 +545,7 @@ class TelemetryMonitor:
             self._light_samples.append(self.light_percent_from_voltage(light_chan.voltage))
             self._light_voltage_samples.append(float(light_chan.voltage))
             self._current_samples.append(0.0)
+            self._last_sample_monotonic = time.monotonic()
 
             capacity = float(ADC["battery_capacity_ah"])
             self._remaining_ah = capacity * (initial_soc_voltage / 100.0)
@@ -516,6 +604,7 @@ class TelemetryMonitor:
             self._current_samples.append(current_a)
             self._light_samples.append(light_pct)
             self._light_voltage_samples.append(v_light)
+            self._last_sample_monotonic = time.monotonic()
 
             avg_battery_v = sum(self._battery_voltage_samples) / len(self._battery_voltage_samples)
             avg_current_a = sum(self._current_samples) / len(self._current_samples)
@@ -559,6 +648,9 @@ class TelemetryMonitor:
             self._last_init_error = str(exc)
 
     def stop(self) -> None:
+        self._stopping.set()
+        if self._worker is not None:
+            self._worker.join(timeout=1)
         self._hardware_ready = False
 
 
@@ -567,6 +659,7 @@ class GPIOControlService:
         self._stop = False
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=MQTT["client_id"])
         self._client.username_pw_set(MQTT["username"], MQTT["password"])
+        self._client.max_queued_messages_set(128)
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._client.on_disconnect = self._on_disconnect
@@ -575,6 +668,7 @@ class GPIOControlService:
         self._drs: Optional[DRSRuntime] = None
         self._drs_lock = threading.RLock()
         self._mqtt_connected = False
+        self._events = queue.Queue(maxsize=64)
         self._telemetry = TelemetryMonitor(self._client, self._publish)
         self._configure_gpio()
         self._configure_sense_inputs()
@@ -616,32 +710,52 @@ class GPIOControlService:
         with self._drs_lock:
             if self._drs is None:
                 return
-            if self._drs.output is None:
-                self._drs.output = PWMOutputDevice(self._drs.pin, frequency=self._drs.frequency_hz, initial_value=0)
             target_pulse = self._drs.open_pulse_us if state == "OPEN" else self._drs.close_pulse_us
-            start_pulse = self._drs.current_pulse_us
-            transition_seconds = float(DRS.get("transition_seconds", 0))
-            if start_pulse is None or transition_seconds <= 0:
-                self._drs.output.value = self._servo_duty(target_pulse, self._drs.frequency_hz)
-            else:
-                steps = max(1, round(transition_seconds / 0.01))
-                for step in range(1, steps + 1):
-                    pulse = start_pulse + ((target_pulse - start_pulse) * step / steps)
-                    self._drs.output.value = self._servo_duty(pulse, self._drs.frequency_hz)
-                    if step != steps:
-                        time.sleep(transition_seconds / steps)
-            self._drs.current_pulse_us = target_pulse
-            self._drs.state = state
-            if DRS.get("switch_behavior") == "pulse_release":
-                self._drs.pulse_release_at_monotonic = time.monotonic() + float(DRS["pulse_release_seconds"])
-            else:
+            duplicate = self._drs.state == state and (
+                self._drs.current_pulse_us == target_pulse or
+                self._drs.transition_target_pulse_us == target_pulse
+            )
+            if not duplicate:
+                if self._drs.output is None:
+                    self._drs.output = PWMOutputDevice(self._drs.pin, frequency=self._drs.frequency_hz, initial_value=0)
+                start_pulse = self._drs.current_pulse_us
+                transition_seconds = float(DRS.get("transition_seconds", 0))
                 self._drs.pulse_release_at_monotonic = None
+                if start_pulse is None or transition_seconds <= 0:
+                    self._drs.output.value = self._servo_duty(target_pulse, self._drs.frequency_hz)
+                    self._drs.current_pulse_us = target_pulse
+                    self._drs.transition_target_pulse_us = None
+                    self._schedule_drs_release()
+                else:
+                    self._drs.transition_start_pulse_us = start_pulse
+                    self._drs.transition_target_pulse_us = target_pulse
+                    self._drs.transition_started_monotonic = time.monotonic()
+            self._drs.state = state
         if publish:
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", state)
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
 
+    def _schedule_drs_release(self) -> None:
+        if DRS.get("switch_behavior") == "pulse_release":
+            self._drs.pulse_release_at_monotonic = time.monotonic() + float(DRS["pulse_release_seconds"])
+
+    def _advance_drs(self) -> None:
+        if self._drs is None or self._drs.transition_target_pulse_us is None:
+            return
+        fraction = min(1.0, (time.monotonic() - self._drs.transition_started_monotonic) /
+                       float(DRS["transition_seconds"]))
+        pulse = self._drs.transition_start_pulse_us + (
+            self._drs.transition_target_pulse_us - self._drs.transition_start_pulse_us
+        ) * fraction
+        self._drs.output.value = self._servo_duty(pulse, self._drs.frequency_hz)
+        self._drs.current_pulse_us = pulse
+        if fraction >= 1:
+            self._drs.transition_target_pulse_us = None
+            self._schedule_drs_release()
+
     def _release_drs_if_due(self) -> None:
         with self._drs_lock:
+            self._advance_drs()
             if self._drs is None or self._drs.output is None or self._drs.pulse_release_at_monotonic is None:
                 return
             if time.monotonic() < self._drs.pulse_release_at_monotonic:
@@ -716,11 +830,8 @@ class GPIOControlService:
 
                 if circuit.switch_mode == MODE_BINARY:
                     if circuit.switch_pin is not None:
-                        switch = Button(
-                            pin=int(circuit.switch_pin),
-                            pull_up=circuit.switch_pull_up,
-                            bounce_time=0.05,
-                        )
+                        switch = self._make_button(int(circuit.switch_pin), circuit.switch_pull_up,
+                                                   circuit.switch_active_high)
                 else:
                     if circuit.switch_pin_on is None or circuit.switch_pin_auto is None:
                         LOG.warning(
@@ -755,16 +866,6 @@ class GPIOControlService:
                 )
                 self._circuits[circuit_key] = runtime
 
-                if switch is not None:
-                    switch.when_pressed = lambda ck=circuit_key: self._on_switch_event(ck)
-                    switch.when_released = lambda ck=circuit_key: self._on_switch_event(ck)
-                if switch_on is not None:
-                    switch_on.when_pressed = lambda ck=circuit_key: self._on_switch_event(ck)
-                    switch_on.when_released = lambda ck=circuit_key: self._on_switch_event(ck)
-                if switch_auto is not None:
-                    switch_auto.when_pressed = lambda ck=circuit_key: self._on_switch_event(ck)
-                    switch_auto.when_released = lambda ck=circuit_key: self._on_switch_event(ck)
-
                 self._apply_logic(runtime, publish=False)
 
     def _configure_sense_inputs(self) -> None:
@@ -786,8 +887,6 @@ class GPIOControlService:
                 key = self._key(si.trike, si.name)
                 runtime = SenseInputRuntime(config=si, button=button)
                 self._sense_inputs[key] = runtime
-                button.when_pressed = lambda k=key: self._on_sense_input_event(k)
-                button.when_released = lambda k=key: self._on_sense_input_event(k)
 
     @staticmethod
     def _key(trike: str, name: str) -> str:
@@ -810,22 +909,20 @@ class GPIOControlService:
         return payload.decode("utf-8", errors="ignore").strip().upper()
 
     def _publish(self, topic: str, payload: str, retain: Optional[bool] = None) -> None:
+        if not self._mqtt_connected:
+            return
         if retain is None:
             retain = MQTT["retain_state"]
         self._client.publish(topic, payload, qos=MQTT["qos"], retain=retain)
         LOG.debug("Published %s => %s", topic, payload)
 
     @staticmethod
-    def _make_button(pin: int, pull_up: Optional[bool], active_high: bool) -> Button:
-        """Create a gpiozero Button for both pulled and floating inputs.
-
-        gpiozero requires active_state when pull_up=None. For floating inputs,
-        is_pressed should already represent the configured active level.
-        """
-        kwargs = {"pin": pin, "pull_up": pull_up, "bounce_time": 0.05}
+    def _make_button(pin: int, pull_up: Optional[bool], active_high: bool) -> PolledInput:
+        """Preserve input/pull semantics without requesting edge interrupts."""
+        kwargs = {"pin": pin, "pull_up": pull_up}
         if pull_up is None:
             kwargs["active_state"] = bool(active_high)
-        return Button(**kwargs)
+        return PolledInput(**kwargs)
 
     def _binary_switch_forced_on(self, runtime: CircuitRuntime) -> bool:
         if runtime.switch is None:
@@ -835,7 +932,7 @@ class GPIOControlService:
             return bool(raw_pressed)
         return bool(raw_pressed) if runtime.config.switch_active_high else not bool(raw_pressed)
 
-    def _three_position_active(self, button: Optional[Button], active_high: bool, pull_up: Optional[bool]) -> bool:
+    def _three_position_active(self, button: Optional[PolledInput], active_high: bool, pull_up: Optional[bool]) -> bool:
         if button is None:
             return False
         raw_pressed = button.is_pressed
@@ -971,10 +1068,11 @@ class GPIOControlService:
                 effective = STATE_OFF
                 source = SOURCE_LOCAL
 
-        if effective == STATE_ON:
-            runtime.output.on()
-        else:
-            runtime.output.off()
+        if effective != previous_state:
+            if effective == STATE_ON:
+                runtime.output.on()
+            else:
+                runtime.output.off()
 
         runtime.effective_state = effective
         runtime.source = source
@@ -1043,10 +1141,14 @@ class GPIOControlService:
                     errors.append(f"drs:{type(exc).__name__}")
         if output_count == 0:
             errors.append("no_gpio_outputs_configured")
-        return {"schema": "hpr.gpio_evidence.v1", "outputs_checked": output_count,
+        evidence = {"schema": "hpr.gpio_evidence.v1", "outputs_checked": output_count,
                 "inputs_checked": input_count, "errors": errors,
                 "device": "online" if not errors else "failed",
-                "reason": "gpio_pin_readbacks_match" if not errors else "gpio_pin_readback_failed"}
+                "reason": "gpio_pin_readbacks_match" if not errors else "gpio_pin_readback_failed",
+                "input_monitoring": "polled_debounced"}
+        if getattr(self, "_telemetry", None) is not None:
+            evidence["adc"] = self._telemetry.health_snapshot()
+        return evidence
 
     def _publish_gpio_evidence(self) -> None:
         if self._mqtt_connected:
@@ -1144,6 +1246,39 @@ class GPIOControlService:
         if self._drs is not None and self._drs.mode == "RIDER_CONTROL" and input_key == self._key(DRS["trike"], DRS["rider_control_input"]):
             self._apply_drs_rider_switch(publish=True)
 
+    def _poll_inputs(self) -> None:
+        for key, runtime in self._sense_inputs.items():
+            if self._sense_input_state(runtime) != runtime.last_state:
+                self._on_sense_input_event(key)
+        for key, runtime in self._circuits.items():
+            if any(button is not None for button in (runtime.switch, runtime.switch_on, runtime.switch_auto)):
+                if self._switch_state_payload(runtime) != runtime.last_switch_state:
+                    self._on_switch_event(key)
+
+    def _queue_event(self, kind, message=None) -> None:
+        try:
+            self._events.put_nowait((kind, message))
+        except queue.Full:
+            now = time.monotonic()
+            if now - getattr(self, "_last_queue_warning", 0) > 30:
+                LOG.warning("GPIO event queue full; request rejected")
+                self._last_queue_warning = now
+
+    def _drain_events(self) -> None:
+        for _ in range(32):
+            try:
+                kind, message = self._events.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "command":
+                self._handle_message(message)
+            elif kind == "connected":
+                if SERVICE["publish_discovery_on_start"]:
+                    self._publish_discovery()
+                if SERVICE["republish_state_on_reconnect"]:
+                    self._publish_all_states()
+                    self._telemetry.publish_latest()
+
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         LOG.info("MQTT connected: rc=%s", reason_code)
         self._mqtt_connected = not (reason_code.is_failure if hasattr(reason_code, "is_failure") else reason_code != 0)
@@ -1154,16 +1289,19 @@ class GPIOControlService:
             client.subscribe(f"{base}/set", qos=MQTT["qos"])
         if self._drs is not None:
             client.subscribe(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/set", qos=MQTT["qos"])
-        if SERVICE["publish_discovery_on_start"]:
-            self._publish_discovery()
-        if SERVICE["republish_state_on_reconnect"]:
-            self._publish_all_states()
+        self._queue_event("connected")
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
         LOG.warning("MQTT disconnected: rc=%s", reason_code)
 
     def _on_message(self, client, userdata, msg) -> None:
+        self._queue_event("command", msg)
+
+    def _handle_message(self, msg) -> None:
+        if msg.retain:
+            LOG.info("Ignoring retained actuator command on %s", msg.topic)
+            return
         payload = self._sanitize_payload(msg.payload)
         topic_root = MQTT.get("topic_root", "hpr")
         if self._drs is not None and msg.topic == f"{topic_root}/{DRS['trike']}/control/drs/set":
@@ -1179,9 +1317,6 @@ class GPIOControlService:
                 if self._is_headlight_mode(runtime):
                     # The central boot mode, not an old retained command, owns
                     # the initial setting after a reconnect or service restart.
-                    if msg.retain:
-                        LOG.warning("Ignoring retained headlight command on %s", msg.topic)
-                        return
                     if payload not in (STATE_ON, STATE_OFF, "AUTO"):
                         LOG.warning("Ignoring invalid headlight mode on %s: %r", msg.topic, payload)
                         return
@@ -1214,11 +1349,12 @@ class GPIOControlService:
         next_gpio_evidence = 0.0
         try:
             while not self._stop:
+                self._drain_events()
+                self._poll_inputs()
                 now = time.monotonic()
                 if now >= next_gpio_evidence:
                     self._publish_gpio_evidence()
                     next_gpio_evidence = now + 5.0
-                self._telemetry.tick()
                 self._handle_remote_pulse_expiry()
                 self._release_drs_if_due()
                 for runtime in self._circuits.values():
@@ -1232,6 +1368,7 @@ class GPIOControlService:
                 time.sleep(float(SERVICE["poll_interval_seconds"]))
         finally:
             self._telemetry.stop()
+            self._mqtt_connected = False
             self._client.loop_stop()
             self._client.disconnect()
             for runtime in self._sense_inputs.values():

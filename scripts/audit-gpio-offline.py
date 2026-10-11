@@ -69,9 +69,9 @@ def retained_commands():
     service._apply_logic = Mock()
     with patch.object(gpio, "MQTT", {"topic_root": "test"}), \
          patch.object(gpio, "DRS", {"trike": "test"}):
-        service._on_message(None, None, SimpleNamespace(
+        service._handle_message(SimpleNamespace(
             topic="test/test/control/drs/set", payload=b"OPEN", retain=True))
-        service._on_message(None, None, SimpleNamespace(
+        service._handle_message(SimpleNamespace(
             topic="test/test/control/horn/set", payload=b"ON", retain=True))
     return {"retained_drs_open_accepted": service._set_drs_mode.called,
             "retained_horn_on_accepted": horn.requested_state == "ON"}
