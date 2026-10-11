@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import signal
 import subprocess
 import time
@@ -18,9 +19,37 @@ from hpr_gateway.config import ConfigError, load_config
 
 LOG = logging.getLogger("hpr_bluetooth_recovery")
 SYS_BLUETOOTH = Path("/sys/class/bluetooth")
-POLL_SECONDS = 15
-RETRY_COOLDOWN_SECONDS = 120
-MAX_USB_RESETS_PER_HOUR = 3
+POLL_SECONDS = 10
+RETRY_COOLDOWN_SECONDS = 30
+MAX_RETRY_COOLDOWN_SECONDS = 120
+
+
+def scan_command_failed(message: str, adapter: str) -> bool:
+    """Only errors from this controller's scan commands qualify."""
+    if not re.search(rf"\b{re.escape(adapter)}:", message):
+        return False
+    return any(text in message for text in (
+        "Unable to disable scanning", "Unable to enable scanning",
+        "stop background scanning failed", "Opcode 0x200c failed",
+        "Opcode 0x200b failed", "Opcode 0x2041 failed", "Opcode 0x2042 failed",
+    ))
+
+
+def kernel_scan_failed(adapter: str, since: float) -> bool:
+    result = subprocess.run(
+        ["journalctl", "-k", "--since", f"@{since:.3f}", "--no-pager", "-o", "cat"],
+        capture_output=True, text=True, timeout=6, check=True,
+    )
+    return sum(scan_command_failed(line, adapter) for line in result.stdout.splitlines()) >= 3
+
+
+def refresh_hrm_scanner() -> None:
+    # SIGUSR1 rebuilds discovery alone; the onboard rider connection survives.
+    active = subprocess.run(["systemctl", "is-active", "--quiet", "hpr-heart-rate.service"],
+                            timeout=6).returncode == 0
+    command = (["systemctl", "kill", "--kill-whom=main", "--signal=SIGUSR1"] if active
+               else ["systemctl", "restart"])
+    subprocess.run(command + ["hpr-heart-rate.service"], timeout=20, check=True)
 
 
 class ScanHealth:
@@ -130,10 +159,9 @@ def wait_for_controller(config, previous_adapter: str, timeout_seconds: int = 20
             adapter = resolve_bluetooth_role(config, "heart_rate", default_adapter="hci1")
             if adapter_is_up(adapter) or power_up(adapter):
                 if adapter != previous_adapter or restart_hrm:
-                    LOG.warning("Scan controller recovered (%s -> %s); restarting HRM service only",
+                    LOG.warning("Scan controller recovered (%s -> %s); refreshing HRM discovery",
                                 previous_adapter, adapter)
-                    subprocess.run(["systemctl", "try-restart", "hpr-heart-rate.service"],
-                                   timeout=20, check=True)
+                    refresh_hrm_scanner()
                 return True
         except (ConfigError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
@@ -148,7 +176,7 @@ def recover(config, adapter: str, *, force_usb_reset: bool = False) -> bool:
     device = usb_device_for_adapter(adapter)
     reauthorize_usb_device(device)
     # Any USB re-enumeration invalidates BlueZ scanner state, even when Linux
-    # reuses the same hci number. Restart only the HRM service in that case.
+    # reuses the same hci number. Rebuild scanning without dropping active GATT.
     if wait_for_controller(config, adapter, restart_hrm=True):
         LOG.info("Recovered HRM scan controller after isolated USB reset")
         return True
@@ -169,8 +197,9 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    attempts: deque[float] = deque()
     next_attempt = 0.0
+    last_recovery_finished = time.time()
+    failed_recoveries = 0
     scan_health = None
     while not stopping:
         try:
@@ -186,23 +215,24 @@ def main() -> int:
             adapter = resolve_bluetooth_role(config, "heart_rate", default_adapter="hci1")
             is_up = adapter_is_up(adapter)
             scan_failed = scan_health is not None and scan_health.failed()
-            if is_up and not scan_failed:
+            kernel_failed = kernel_scan_failed(adapter, max(last_recovery_finished, time.time() - 30))
+            if is_up and not scan_failed and not kernel_failed:
                 time.sleep(POLL_SECONDS)
                 continue
             now = time.monotonic()
-            while attempts and now - attempts[0] >= 3600:
-                attempts.popleft()
-            if now >= next_attempt and len(attempts) < MAX_USB_RESETS_PER_HOUR:
+            if now >= next_attempt:
                 LOG.warning("HRM scan adapter %s is %s; attempting isolated recovery",
-                            adapter, "DOWN" if not is_up else "repeatedly failing discovery")
-                attempts.append(now)
-                next_attempt = now + RETRY_COOLDOWN_SECONDS
-                recover(config, adapter, force_usb_reset=is_up)
+                            adapter, "DOWN" if not is_up else "failing scan commands" if kernel_failed
+                            else "repeatedly failing discovery")
+                recovered = recover(config, adapter, force_usb_reset=is_up)
+                failed_recoveries = 0 if recovered else failed_recoveries + 1
+                next_attempt = time.monotonic() + min(
+                    MAX_RETRY_COOLDOWN_SECONDS,
+                    RETRY_COOLDOWN_SECONDS * 2 ** min(failed_recoveries, 2),
+                )
+                last_recovery_finished = time.time()
                 if scan_health:
                     scan_health.clear()
-            elif now >= next_attempt and len(attempts) >= MAX_USB_RESETS_PER_HOUR:
-                LOG.error("HRM scan adapter remains DOWN; recovery limit reached (hardware review needed)")
-                next_attempt = now + RETRY_COOLDOWN_SECONDS
         except (ConfigError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             LOG.error("HRM scan health check failed: %s", exc)
         time.sleep(POLL_SECONDS)

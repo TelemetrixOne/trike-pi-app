@@ -128,9 +128,12 @@ NUMBER_BY_MAC: Dict[str, int] = {}
 DEVICE_NAME_BY_MAC: Dict[str, str] = {}
 RIDER_BY_MAC: Dict[str, str] = {}
 KNOWN_MACS: set[str] = set()
+RUNTIME_CONFIG: Optional[HprConfig] = None
 
 
 def configure(config: HprConfig) -> None:
+    global RUNTIME_CONFIG
+    RUNTIME_CONFIG = config
     global TRIKE, MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, TOPIC_ROOT
     global ACTIVE_ADAPTER, SCAN_ADAPTER
     global TOPIC_BPM, TOPIC_JSON, TOPIC_STATUS, TOPIC_SELECTED_MAC
@@ -212,10 +215,16 @@ def configure(config: HprConfig) -> None:
 
 class StopFlag:
     stop = False
+    restart_scan = False
 
 
 def _sig_handler(*_args) -> None:
     StopFlag.stop = True
+
+
+def _scan_restart_handler(*_args) -> None:
+    # The recovery watchdog resets only USB discovery, preserving active GATT.
+    StopFlag.restart_scan = True
 
 
 @dataclass
@@ -595,6 +604,7 @@ def candidates_json_payload() -> str:
 
 async def scanner_task(mqttc: mqtt.Client, scanner_ready: asyncio.Event) -> None:
     """Keep the dedicated USB controller scanning across active GATT sessions."""
+    global SCAN_ADAPTER
 
     def cb(device, adv) -> None:
         mac = (getattr(device, "address", "") or "").upper()
@@ -620,14 +630,20 @@ async def scanner_task(mqttc: mqtt.Client, scanner_ready: asyncio.Event) -> None
         )
 
     while not StopFlag.stop:
+        StopFlag.restart_scan = False
         scanner = None
         mqttc.publish(TOPIC_STATUS, payload=f"scanner_starting:{SCAN_ADAPTER}", qos=0, retain=False)
         try:
+            if RUNTIME_CONFIG is not None:
+                SCAN_ADAPTER = await asyncio.to_thread(
+                    resolve_bluetooth_role, RUNTIME_CONFIG, "heart_rate",
+                    legacy_adapter_path="heart_rate.scan_adapter", default_adapter="hci1",
+                )
             scanner = BleakScanner(cb, adapter=SCAN_ADAPTER)
             await asyncio.wait_for(scanner.start(), timeout=CONNECT_TIMEOUT_SEC)
             scanner_ready.set()
             mqttc.publish(TOPIC_STATUS, payload=f"scanner_running:{SCAN_ADAPTER}", qos=0, retain=False)
-            while not StopFlag.stop:
+            while not StopFlag.stop and not StopFlag.restart_scan:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             raise
@@ -928,6 +944,7 @@ async def manager_task(mqttc: mqtt.Client, scanner_ready: asyncio.Event) -> None
 async def main() -> None:
     signal.signal(signal.SIGINT, _sig_handler)
     signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGUSR1, _scan_restart_handler)
 
     mqttc = mqtt_connect()
     mqttc.publish(TOPIC_STATUS, payload="multi_hrm_v18_starting", qos=1, retain=True)

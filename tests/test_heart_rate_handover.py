@@ -45,6 +45,46 @@ class HandoverTests(unittest.TestCase):
 
 
 class ContinuousScannerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovery_signal_rebuilds_usb_scanner_without_changing_active_rider(self):
+        instances = []
+
+        class FakeScanner:
+            def __init__(self, callback, adapter):
+                self.stopped = False
+                instances.append(self)
+
+            async def start(self):
+                pass
+
+            async def stop(self):
+                self.stopped = True
+
+        class FakeMqtt:
+            def publish(self, *_args, **_kwargs):
+                pass
+
+        ready = asyncio.Event()
+        hr.StopFlag.stop = False
+        with patch.object(hr, "BleakScanner", FakeScanner), \
+             patch.object(hr, "RECONNECT_DELAY_SEC", 0.01), \
+             patch.object(hr, "RUNTIME_CONFIG", None), \
+             patch.object(hr, "active_mac", "AA:AA:AA:AA:AA:AA"):
+            task = asyncio.create_task(hr.scanner_task(FakeMqtt(), ready))
+            try:
+                await asyncio.wait_for(ready.wait(), 1)
+                hr._scan_restart_handler()
+                async def restarted():
+                    while len(instances) < 2:
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(restarted(), 2)
+                self.assertTrue(instances[0].stopped)
+                self.assertFalse(instances[1].stopped)
+                self.assertEqual(hr.active_mac, "AA:AA:AA:AA:AA:AA")
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
     async def test_usb_scan_remains_active_until_service_shutdown(self):
         class FakeScanner:
             instance = None

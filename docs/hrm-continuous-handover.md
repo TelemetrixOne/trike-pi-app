@@ -25,8 +25,23 @@ margin requires physical rider-change testing.
 Deploy with `scripts/deploy-pi-hrm-continuous-handover.sh` from GitHub main.
 It preserves exact prior live modules and restarts only the HRM and scanner
 recovery services. The paired rollback script restores both modules. A USB
-re-enumeration restarts the HRM service even if Linux keeps the same hci number,
-because its scanner object would otherwise be stale.
+re-enumeration now refreshes HRM discovery with SIGUSR1, even if Linux keeps
+the same hci number, because its scanner object would otherwise be stale.
+The active onboard GATT connection survives this refresh. If the HRM service
+has already failed, recovery starts that service instead.
+
+The watchdog detects repeated kernel scan-command failures on the assigned
+USB controller even if HCI reports UP and BlueZ reports Discovering. It polls
+every 10 seconds and uses errors from the previous 30 seconds, excluding those
+preceding the last recovery. Empty candidate lists alone do not trigger resets:
+a connected strap can stop advertising and other riders may be out of range.
+Recovery keeps retrying with a 30-second cooldown (up to 120 seconds after failed
+resets), rather than abandoning scanning after three attempts.
+
+Upgrade from the initial continuous handover deployment using
+`scripts/deploy-pi-hrm-scanner-health.sh`. It preserves both modules and restarts
+only HRM and its watchdog. Revert with
+`scripts/rollback-pi-hrm-continuous-handover.sh` and the printed backup path.
 
 The current ASUS USB-BT400 dongle has repeatedly failed at the HCI level.
 Software can recover it temporarily but cannot guarantee continuous scanning

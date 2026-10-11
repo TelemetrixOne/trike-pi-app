@@ -2,12 +2,40 @@ import tempfile
 import unittest
 from collections import deque
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 from hpr_gateway.services import bluetooth_recovery as recovery
 
 
 class BluetoothRecoveryTests(unittest.TestCase):
+    def test_kernel_errors_detect_powered_scanner_stall_and_ignore_other_adapter(self):
+        messages = "\n".join([
+            "Bluetooth: hci1: Opcode 0x200c failed: -16",
+            "Bluetooth: hci1: Unable to disable scanning: -16",
+            "Bluetooth: hci1: stop background scanning failed: -16",
+        ])
+        with patch.object(recovery.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 0, messages)):
+            self.assertTrue(recovery.kernel_scan_failed("hci1", 100))
+            self.assertFalse(recovery.kernel_scan_failed("hci0", 100))
+        self.assertFalse(recovery.scan_command_failed("Bluetooth: hci10: Opcode 0x200c failed", "hci1"))
+        self.assertFalse(recovery.scan_command_failed("Bluetooth: hci1: BCM: firmware Patch file not found", "hci1"))
+
+    def test_recovery_refreshes_scanning_without_restarting_active_gatt(self):
+        with patch.object(recovery.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 0)) as run:
+            recovery.refresh_hrm_scanner()
+        self.assertEqual(run.call_args_list[-1].args[0],
+                         ["systemctl", "kill", "--kill-whom=main", "--signal=SIGUSR1", "hpr-heart-rate.service"])
+
+    def test_recovery_starts_failed_hrm_service(self):
+        with patch.object(recovery.subprocess, "run", side_effect=[
+            subprocess.CompletedProcess([], 3), subprocess.CompletedProcess([], 0)
+        ]) as run:
+            recovery.refresh_hrm_scanner()
+        self.assertEqual(run.call_args_list[-1].args[0], ["systemctl", "restart", "hpr-heart-rate.service"])
+
     def test_repeated_failed_discovery_is_unhealthy_but_empty_scans_alone_are_not(self):
         health = recovery.ScanHealth.__new__(recovery.ScanHealth)
         health.failures = deque()
