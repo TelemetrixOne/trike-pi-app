@@ -14,10 +14,8 @@ cameras, or the GATT/telemetry controller. If Linux renumbers the recovered
 scan adapter, it restarts only `hpr-heart-rate.service` so the service resolves
 its current name. Recovery attempts are separated by at least two minutes and
 limited to three per hour; repeated failure is logged for hardware review.
-Three consecutive failed controller-response checks also trigger an isolated
-reset when the controller appears UP but is not actually responding. Controller
-role resolution uses the basic HCI listing, so a timeout querying the scanner's
-local name cannot hide the separate connection controller.
+Controller role resolution uses the basic HCI listing, avoiding verbose
+queries that can interfere with this dongle while scanning.
 The watchdog also observes the HRM service's MQTT scan status. Three failed
 discovery cycles within two minutes (as opposed to merely seeing no rider)
 trigger the scanner-only USB reset and an HRM-service restart to clear stale

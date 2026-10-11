@@ -84,17 +84,6 @@ def adapter_is_up(adapter: str) -> bool:
     return "UP RUNNING" in result.stdout
 
 
-def adapter_responds(adapter: str) -> bool:
-    """A verbose local-controller query detects a powered but wedged USB HCI."""
-    try:
-        subprocess.run(["hciconfig", adapter, "-a"], capture_output=True,
-                       text=True, timeout=8, check=True)
-        return True
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        LOG.warning("Scan adapter %s did not answer controller query: %s", adapter, exc)
-        return False
-
-
 def usb_device_for_interface(interface: Path) -> Path:
     # The immediate parent of a USB interface is its own device. Never walk
     # farther up the tree: that could deauthorize a shared hub and its peers.
@@ -181,7 +170,6 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
     attempts: deque[float] = deque()
     next_attempt = 0.0
-    unresponsive_checks = 0
     scan_health = None
     while not stopping:
         try:
@@ -196,9 +184,8 @@ def main() -> int:
                     LOG.error("HRM scan status subscription unavailable: %s", exc)
             adapter = resolve_bluetooth_role(config, "heart_rate", default_adapter="hci1")
             is_up = adapter_is_up(adapter)
-            unresponsive_checks = 0 if not is_up or adapter_responds(adapter) else unresponsive_checks + 1
             scan_failed = scan_health is not None and scan_health.failed()
-            if is_up and unresponsive_checks < 3 and not scan_failed:
+            if is_up and not scan_failed:
                 time.sleep(POLL_SECONDS)
                 continue
             now = time.monotonic()
@@ -206,13 +193,11 @@ def main() -> int:
                 attempts.popleft()
             if now >= next_attempt and len(attempts) < MAX_USB_RESETS_PER_HOUR:
                 LOG.warning("HRM scan adapter %s is %s; attempting isolated recovery",
-                            adapter, "DOWN" if not is_up else
-                            "repeatedly failing discovery" if scan_failed else "unresponsive")
+                            adapter, "DOWN" if not is_up else "repeatedly failing discovery")
                 attempts.append(now)
                 next_attempt = now + RETRY_COOLDOWN_SECONDS
                 recover(config, adapter, force_usb_reset=is_up,
                         restart_hrm=scan_failed)
-                unresponsive_checks = 0
                 if scan_health:
                     scan_health.clear()
             elif now >= next_attempt and len(attempts) >= MAX_USB_RESETS_PER_HOUR:
