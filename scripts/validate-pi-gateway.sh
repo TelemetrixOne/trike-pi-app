@@ -143,6 +143,12 @@ if [ "${role_status}" -eq 0 ]; then
   else
     fail bluetooth-separation "roles resolved to the same controller"
   fi
+  heart_rate_controller="$(hciconfig "${heart_rate_adapter}" 2>/dev/null || true)"
+  if [[ "${heart_rate_controller}" == *'UP RUNNING'* ]]; then
+    pass bluetooth-scan-powered "${heart_rate_adapter} UP"
+  else
+    fail bluetooth-scan-powered "${heart_rate_adapter} is not UP"
+  fi
 else
   fail bluetooth-roles "stable controller resolution failed"
 fi
@@ -246,6 +252,7 @@ declare -a service_pairs=(
   'tpms:hpr-tpms.service'
   'gps:hpr-gps.service'
   'heart_rate:hpr-heart-rate.service'
+  'heart_rate:hpr-bluetooth-recovery.service'
   'power_cadence:hpr-power-cadence.service'
   'gpio_control:hpr-gpio-control.service'
   'gpio_config_sync:hpr-gpio-config-sync.service'

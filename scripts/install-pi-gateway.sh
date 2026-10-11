@@ -366,7 +366,7 @@ install_unit() {
   if [ "${module}" = "gpio_control" ]; then
     unit_type="notify"
   fi
-  if [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ] || [ "${module}" = "power_cadence_config_sync" ]; then
+  if [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ] || [ "${module}" = "power_cadence_config_sync" ] || [ "${module}" = "bluetooth_recovery" ]; then
     unit_user="root"
     unit_group="root"
   fi
@@ -381,7 +381,7 @@ install_unit() {
     wants="${wants} gpsd.service gpsd.socket"
   fi
   case "${module}" in
-    heart_rate|tpms|power_cadence|derailleur)
+    heart_rate|bluetooth_recovery|tpms|power_cadence|derailleur)
       after="${after} bluetooth.service"
       wants="${wants} bluetooth.service"
       ;;
@@ -624,6 +624,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   install_unit hpr-tpms.service tpms
   install_unit hpr-tpms-config-sync.service tpms_config_sync
   install_unit hpr-heart-rate.service heart_rate
+  install_unit hpr-bluetooth-recovery.service bluetooth_recovery
   install_unit hpr-power-cadence.service power_cadence
   install_unit hpr-power-cadence-config-sync.service power_cadence_config_sync
   install_unit hpr-gpio-control.service gpio_control
@@ -658,6 +659,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   enable_service_if_configured tpms hpr-tpms.service
   enable_service_if_configured tpms_config_sync hpr-tpms-config-sync.service
   enable_service_if_configured heart_rate hpr-heart-rate.service
+  enable_service_if_configured heart_rate hpr-bluetooth-recovery.service
   enable_service_if_configured power_cadence hpr-power-cadence.service
   enable_service_if_configured power_cadence_config_sync hpr-power-cadence-config-sync.service
   enable_service_if_configured gpio_control hpr-gpio-control.service

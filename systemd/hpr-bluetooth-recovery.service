@@ -1,0 +1,20 @@
+[Unit]
+Description=HPR dedicated HRM scan adapter recovery
+After=bluetooth.service hpr-heart-rate.service
+Wants=bluetooth.service hpr-heart-rate.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/hpr/gateway
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/hpr/gateway
+ExecStart=/opt/hpr/gateway/venv/bin/python -m hpr_gateway.services.bluetooth_recovery --config /etc/hpr/hpr.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

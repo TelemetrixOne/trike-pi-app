@@ -1,0 +1,65 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from hpr_gateway.services import bluetooth_recovery as recovery
+
+
+class BluetoothRecoveryTests(unittest.TestCase):
+    def test_selects_only_the_usb_device_owning_the_scanner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            device = root / "usb1" / "1-1" / "1-1.4"
+            interface = device / "interface-0"
+            interface.mkdir(parents=True)
+            (device / "idVendor").write_text("0b05", encoding="ascii")
+            (device / "idProduct").write_text("17cb", encoding="ascii")
+            (device / "authorized").write_text("1", encoding="ascii")
+            (device / "bDeviceClass").write_text("e0", encoding="ascii")
+            self.assertEqual(recovery.usb_device_for_interface(interface), device)
+            with patch.object(recovery.time, "sleep"):
+                recovery.reauthorize_usb_device(device)
+            self.assertEqual((device / "authorized").read_text(encoding="ascii"), "1")
+
+    def test_never_falls_back_to_shared_usb_hub(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            hub = Path(temporary) / "1-1"
+            interface = hub / "1-1.4" / "interface-0"
+            interface.mkdir(parents=True)
+            for name, value in (("idVendor", "1234"), ("idProduct", "5678"),
+                                ("authorized", "1"), ("bDeviceClass", "09")):
+                (hub / name).write_text(value, encoding="ascii")
+            with self.assertRaises(recovery.ConfigError):
+                recovery.usb_device_for_interface(interface)
+
+    def test_tries_power_up_before_targeted_usb_reset(self):
+        with patch.object(recovery, "power_up", return_value=True), \
+             patch.object(recovery, "reauthorize_usb_device") as reset:
+            self.assertTrue(recovery.recover(object(), "hci1"))
+            reset.assert_not_called()
+
+    def test_usb_authorization_is_restored_if_reset_wait_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            device = Path(temporary)
+            (device / "idVendor").write_text("0b05", encoding="ascii")
+            (device / "idProduct").write_text("17cb", encoding="ascii")
+            authorized = device / "authorized"
+            authorized.write_text("1", encoding="ascii")
+            with patch.object(recovery.time, "sleep", side_effect=RuntimeError("interrupted")):
+                with self.assertRaises(RuntimeError):
+                    recovery.reauthorize_usb_device(device)
+            self.assertEqual(authorized.read_text(encoding="ascii"), "1")
+
+    def test_reenumeration_is_followed_by_role_check(self):
+        with patch.object(recovery, "power_up", return_value=False), \
+             patch.object(recovery, "usb_device_for_adapter", return_value=Path("/sys/usb/adapter")), \
+             patch.object(recovery, "reauthorize_usb_device") as reset, \
+             patch.object(recovery, "wait_for_controller", return_value=True) as wait:
+            self.assertTrue(recovery.recover(object(), "hci1"))
+            reset.assert_called_once_with(Path("/sys/usb/adapter"))
+            wait.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()
