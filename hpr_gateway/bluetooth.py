@@ -36,8 +36,11 @@ def release_connection_slot(handle: IO[bytes] | None) -> None:
 def controller_map() -> dict[str, str]:
     """Return Bluetooth controller addresses keyed by Linux hci name."""
     try:
+        # The verbose query asks each controller for its local name. A hung
+        # USB scanner can time out there and hide the healthy UART controller.
+        # The basic listing already includes the stable controller addresses.
         output = subprocess.check_output(
-            ["hciconfig", "-a"], text=True, stderr=subprocess.STDOUT
+            ["hciconfig"], text=True, stderr=subprocess.STDOUT
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ConfigError(f"unable to enumerate Bluetooth controllers: {exc}") from exc

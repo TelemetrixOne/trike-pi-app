@@ -43,11 +43,12 @@ def minimal_config() -> HprConfig:
 
 class BluetoothRoleTests(unittest.TestCase):
     @patch("subprocess.check_output", return_value=HCICONFIG)
-    def test_controller_map_uses_stable_addresses(self, _mock) -> None:
+    def test_controller_map_uses_stable_addresses(self, mock_check_output) -> None:
         self.assertEqual(
             controller_map(),
             {"hci1": "5C:F3:70:A4:51:3D", "hci0": "88:A2:9E:83:B0:2F"},
         )
+        self.assertEqual(mock_check_output.call_args.args[0], ["hciconfig"])
 
     @patch("hpr_gateway.bluetooth.controller_map")
     def test_role_survives_hci_renumbering(self, mapped) -> None:

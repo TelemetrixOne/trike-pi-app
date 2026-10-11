@@ -60,6 +60,15 @@ class BluetoothRecoveryTests(unittest.TestCase):
             reset.assert_called_once_with(Path("/sys/usb/adapter"))
             wait.assert_called_once()
 
+    def test_powered_but_unresponsive_controller_forces_own_usb_reset(self):
+        with patch.object(recovery, "power_up") as power, \
+             patch.object(recovery, "usb_device_for_adapter", return_value=Path("/sys/usb/adapter")), \
+             patch.object(recovery, "reauthorize_usb_device") as reset, \
+             patch.object(recovery, "wait_for_controller", return_value=True):
+            self.assertTrue(recovery.recover(object(), "hci1", force_usb_reset=True))
+            power.assert_not_called()
+            reset.assert_called_once_with(Path("/sys/usb/adapter"))
+
 
 if __name__ == "__main__":
     unittest.main()
