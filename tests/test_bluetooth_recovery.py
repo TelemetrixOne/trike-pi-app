@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from collections import deque
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,6 +8,20 @@ from hpr_gateway.services import bluetooth_recovery as recovery
 
 
 class BluetoothRecoveryTests(unittest.TestCase):
+    def test_repeated_failed_discovery_is_unhealthy_but_empty_scans_alone_are_not(self):
+        health = recovery.ScanHealth.__new__(recovery.ScanHealth)
+        health.failures = deque()
+        health.error_pending = False
+        for instant in (0, 15, 30):
+            health.observe("scanner_stopped:hci1:candidates=0", instant)
+        self.assertEqual(len(health.failures), 0)
+        for instant in (40, 55, 70):
+            health.observe("scanner_stop_error:BleakDBusError:InProgress", instant)
+            health.observe("scanner_stopped:hci1:candidates=0", instant)
+        self.assertEqual(len(health.failures), 3)
+        health.observe("candidate_try:device", 75)
+        self.assertEqual(len(health.failures), 0)
+
     def test_selects_only_the_usb_device_owning_the_scanner(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

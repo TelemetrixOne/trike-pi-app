@@ -18,6 +18,10 @@ Three consecutive failed controller-response checks also trigger an isolated
 reset when the controller appears UP but is not actually responding. Controller
 role resolution uses the basic HCI listing, so a timeout querying the scanner's
 local name cannot hide the separate connection controller.
+The watchdog also observes the HRM service's MQTT scan status. Three failed
+discovery cycles within two minutes (as opposed to merely seeing no rider)
+trigger the scanner-only USB reset and an HRM-service restart to clear stale
+BlueZ scan state. An empty scan without a scanner error never triggers this.
 
 Deploy with `scripts/deploy-pi-bluetooth-recovery.sh` from a GitHub-main
 checkout on the Pi. The script preserves the previous validator and refuses
