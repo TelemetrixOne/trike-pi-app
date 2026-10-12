@@ -1,0 +1,27 @@
+# Local USB-camera picture tuning. Integers only; hardware ranges are validated.
+# Save edits to /etc/hpr/camera-controls.yaml. Reload is automatic; no restart.
+# Only listed controls are managed. Removing a control leaves its current value.
+# These settings do not change rotation, resolution, frame rate or streaming.
+front:
+  brightness: 0                 # -128..127
+  contrast: 32                  # 0..64
+  gamma: 100                    # 0..499
+  saturation: 57                # 0..128
+  sharpness: 10                 # 0..32
+  backlight_compensation: 0     # 0 or 1
+  auto_exposure: 3              # 3 automatic; 1 manual
+  white_balance_automatic: 1    # 1 automatic; 0 manual
+rear:
+  brightness: 0
+  contrast: 32
+  gamma: 100
+  saturation: 57
+  sharpness: 10
+  backlight_compensation: 0
+  auto_exposure: 3
+  white_balance_automatic: 1
+# Optional, when testing these cameras:
+#   gain: 0                     # 0..63; increasing gain can increase noise
+#   power_line_frequency: 1     # 0 disabled, 1 50Hz, 2 60Hz
+#   exposure_time_absolute: 100 # 100us units; requires auto_exposure: 1
+#   white_balance_temperature: 4000 # requires white_balance_automatic: 0

@@ -443,6 +443,15 @@ configure_video() {
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose.sh" "${video_root}/hpr-video-compose.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose-gst.sh" "${video_root}/hpr-video-compose-gst.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-native.py" "${video_root}/hpr-video-native.py"
+  # Native viewer uses system Python, not the gateway virtual environment.
+  if ! /usr/bin/python3 -c 'import yaml' >/dev/null 2>&1; then
+    apt-get install -y --no-upgrade python3-yaml
+  fi
+  # Local camera tuning is not owned by central configuration synchronisation.
+  if [ ! -e /etc/hpr/camera-controls.yaml ]; then
+    install -o root -g "${SERVICE_GROUP}" -m 0640 \
+      "${INSTALL_ROOT}/config/camera-controls.example.yaml" /etc/hpr/camera-controls.yaml
+  fi
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml

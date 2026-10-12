@@ -4,7 +4,7 @@ import tempfile
 import signal
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('video_native', Path(__file__).parents[1] / 'bin/hpr-video-native.py')
 video = importlib.util.module_from_spec(spec)
@@ -85,6 +85,7 @@ class NativeVideoTests(unittest.TestCase):
             rear.touch()
             settings = {'cameras': {'front': {'device': str(front)}, 'rear': {'device': str(rear)}}}
             with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
+                 patch.object(video, 'CameraControls', return_value=MagicMock(snapshot=lambda: {})), \
                  patch.object(video, 'Child', FakeChild), \
                  patch.object(video.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
                  patch.object(video.time, 'sleep', side_effect=tick), \

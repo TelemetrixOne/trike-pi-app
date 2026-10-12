@@ -13,11 +13,226 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 QUEUE = 'queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream'
 STARTUP_GRACE = 15
 STALL_TIMEOUT = 2
+
+# Local USB-camera tuning is intentionally separate from central race settings.
+PICTURE_CONTROLS = {
+    'brightness', 'contrast', 'gamma', 'saturation', 'sharpness', 'hue', 'gain',
+    'backlight_compensation', 'power_line_frequency', 'auto_exposure',
+    'exposure_time_absolute', 'white_balance_automatic', 'white_balance_temperature',
+}
+
+
+def load_picture_controls(path):
+    import yaml
+    class UniqueLoader(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node):
+        result = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node)
+            if key in result:
+                raise ValueError(f'Duplicate camera/control key: {key}')
+            result[key] = loader.construct_object(value_node)
+        return result
+
+    UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    raw = Path(path).read_bytes()
+    if len(raw) > 65536:
+        raise ValueError('Camera controls file exceeds 64 KiB')
+    data = yaml.load(raw, Loader=UniqueLoader)
+    if not isinstance(data, dict) or set(data) - {'front', 'rear'}:
+        raise ValueError('Camera controls must contain only front/rear mappings')
+    for role, controls in data.items():
+        if not isinstance(controls, dict):
+            raise ValueError(f'{role} must contain control names and integer values')
+        for name, value in controls.items():
+            if name not in PICTURE_CONTROLS or type(value) is not int:
+                raise ValueError(f'Unsupported control or non-integer value: {role}.{name}')
+        if 'exposure_time_absolute' in controls and controls.get('auto_exposure') != 1:
+            raise ValueError(f'{role}: manual exposure time requires auto_exposure: 1')
+        if 'white_balance_temperature' in controls and controls.get('white_balance_automatic') != 0:
+            raise ValueError(f'{role}: colour temperature requires white_balance_automatic: 0')
+    return data
+
+
+def parse_picture_capabilities(output):
+    controls, current = {}, None
+    for line in output.splitlines():
+        match = re.match(r'\s*(\w+)\s+0x[0-9a-f]+\s+\((\w+)\)\s*:\s*(.*)', line)
+        if match:
+            name, kind, fields = match.groups()
+            values = {key: int(value) for key, value in
+                      re.findall(r'(min|max|step|value)=(-?\d+)', fields)}
+            if kind == 'bool':
+                values.update(min=0, max=1, step=1)
+            values['choices'] = [] if kind == 'menu' else None
+            controls[name] = values
+            current = name
+        elif current and controls[current]['choices'] is not None:
+            match = re.match(r'\s*(\d+):', line)
+            if match:
+                controls[current]['choices'].append(int(match[1]))
+    return controls
+
+
+class CameraControls:
+    """Reload local tuning and apply it without blocking the video supervisor."""
+
+    def __init__(self, path='/etc/hpr/camera-controls.yaml'):
+        self.path = Path(path)
+        self.targets = {}
+        self.profile = {}
+        self.marker = None
+        self.version = 0
+        self.applied = {}
+        self.retry = {}
+        self.status = {'config': {'state': 'starting', 'path': str(self.path)}, 'cameras': {}}
+        self.lock = threading.Lock()
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.run, name='camera-controls', daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def update_devices(self, targets):
+        with self.lock:
+            self.targets = dict(targets)
+
+    def snapshot(self):
+        with self.lock:
+            return json.loads(json.dumps(self.status))
+
+    def reload(self):
+        try:
+            stat = self.path.stat()
+            marker = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        except OSError as exc:
+            marker = ('unreadable', str(exc))
+        if marker == self.marker:
+            return
+        self.marker = marker
+        try:
+            profile = load_picture_controls(self.path)
+        except Exception as exc:
+            state = {'state': 'error', 'path': str(self.path), 'error': str(exc),
+                     'using_last_good': bool(self.profile)}
+            print(f'Camera controls config rejected: {exc}', file=sys.stderr, flush=True)
+        else:
+            self.profile = profile
+            self.version += 1
+            self.retry.clear()
+            state = {'state': 'loaded', 'path': str(self.path), 'version': self.version}
+        with self.lock:
+            self.status['config'] = state
+
+    def command(self, device, *args):
+        result = subprocess.run(['v4l2-ctl', '--device', device, *args],
+                                text=True, capture_output=True, timeout=2, check=True)
+        return result.stdout
+
+    @staticmethod
+    def identity(device):
+        stat = os.stat(device)
+        return os.path.realpath(device), stat.st_ino, getattr(stat, 'st_rdev', 0)
+
+    def apply(self, device, identity, desired):
+        def check_device():
+            if self.stopping.is_set() or self.identity(device) != identity:
+                raise OSError('Camera disconnected or changed during control update')
+        check_device()
+        available = parse_picture_capabilities(self.command(device, '--list-ctrls-menus'))
+        # Validate the complete camera profile before writing any setting.
+        for name, value in desired.items():
+            control = available.get(name)
+            if control is None or 'min' not in control or 'max' not in control:
+                raise ValueError(f'{name} is not supported by this camera')
+            if not control['min'] <= value <= control['max'] or (
+                    value - control['min']) % max(1, control.get('step', 1)):
+                raise ValueError(f'{name}={value} is outside the camera range/step')
+            if control['choices'] is not None and value not in control['choices']:
+                raise ValueError(f'{name}={value} is not a supported menu choice')
+        # Disable/enable automatic modes before dependent manual controls.
+        names = sorted(desired, key=lambda name: (name not in
+                       ('auto_exposure', 'white_balance_automatic'), name))
+        previous = {name: available[name].get('value') for name in names}
+        changed = []
+        try:
+            for name in names:
+                if available[name].get('value') != desired[name]:
+                    check_device()
+                    self.command(device, f'--set-ctrl={name}={desired[name]}')
+                    changed.append(name)
+            check_device()
+            readback = parse_picture_capabilities(self.command(device, '--list-ctrls-menus'))
+            actual = {name: readback.get(name, {}).get('value') for name in names}
+            if actual != desired:
+                raise ValueError(f'Control readback does not match requested values: {actual}')
+        except Exception:
+            # Restore only controls actually changed, on the same device generation.
+            for name in reversed(changed):
+                try:
+                    check_device()
+                    if previous[name] is not None:
+                        self.command(device, f'--set-ctrl={name}={previous[name]}')
+                except Exception:
+                    pass
+            raise
+        return actual
+
+    def tick(self):
+        self.reload()
+        with self.lock:
+            targets = dict(self.targets)
+        for role in ('front', 'rear'):
+            target = targets.get(role)
+            desired = self.profile.get(role, {})
+            if not target:
+                self.applied.pop(role, None)
+                self.retry.pop(role, None)
+                state = {'state': 'waiting_for_camera'}
+            elif not desired:
+                self.applied.pop(role, None)
+                state = {'state': 'unmanaged'}
+            else:
+                device, identity = target
+                token = (identity, self.version)
+                if self.applied.get(role) == token or time.monotonic() < self.retry.get(role, 0):
+                    continue
+                try:
+                    actual = self.apply(device, identity, desired)
+                except Exception as exc:
+                    self.retry[role] = time.monotonic() + 5
+                    state = {'state': 'error', 'device': device, 'error': str(exc)}
+                    # One log per changed error, not a continuous log flood.
+                    if self.snapshot()['cameras'].get(role) != state:
+                        print(f'{role} camera controls: {exc}', file=sys.stderr, flush=True)
+                else:
+                    self.applied[role] = token
+                    self.retry.pop(role, None)
+                    state = {'state': 'applied', 'device': device, 'controls': actual,
+                             'version': self.version}
+                    print(f'{role} camera controls applied: {actual}', flush=True)
+            with self.lock:
+                self.status['cameras'][role] = state
+
+    def run(self):
+        while not self.stopping.is_set():
+            try:
+                self.tick()
+            except Exception as exc:
+                print(f'Camera controls worker: {exc}', file=sys.stderr, flush=True)
+            self.stopping.wait(0.5)
+
+    def stop(self):
+        self.stopping.set()
+        self.thread.join(timeout=2)
 
 
 def quote(value):
@@ -226,6 +441,8 @@ def supervise(settings):
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))
     signal.signal(signal.SIGINT, lambda *_: running.__setitem__(0, False))
     children, identities, restarts, retry_at = {}, {}, {}, {}
+    controls = CameraControls()
+    controls.start()
     with tempfile.TemporaryDirectory(prefix='hpr-video-', dir=root) as directory:
         directory = Path(directory)
 
@@ -274,6 +491,8 @@ def supervise(settings):
                         if socket.exists():
                             ensure(role + '-publish', 'publish', publisher_pipeline(
                                 socket, size, fps, camera, role, settings.get('rtsp_port', 8554)))
+                controls.update_devices({role: (device, identities[role]) for role, device in devices.items()
+                                         if identities.get(role)})
                 mode = display_mode() if display.get('enabled', True) else None
                 socket = directory / 'display.sock'
                 if mode and identities.get('front') and socket.exists():
@@ -282,10 +501,12 @@ def supervise(settings):
                     stop('hdmi')
                 write_json(root / 'video-status.json', {
                     'at': time.monotonic(), 'display_mode': mode, 'pip': False,
+                    'camera_controls': controls.snapshot(),
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
                                        **read_progress(child.heartbeat)} for name, child in children.items()}})
                 time.sleep(0.5)
         finally:
+            controls.stop()
             for name in list(children):
                 stop(name)
     return 0
