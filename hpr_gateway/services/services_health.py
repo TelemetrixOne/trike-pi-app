@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from hpr_gateway.config import config_arg_parser, enabled_items, load_config
 from hpr_gateway.mqtt import encode_payload, make_client
+from hpr_gateway.runtime_health import METRICS_INTERVAL, RuntimeHealth
 
 
 def service_health(unit: str) -> str:
@@ -178,7 +179,14 @@ def main() -> int:
     client.on_connect = on_connect
     client.connect(config.mqtt.host, config.mqtt.port, keepalive=60)
     client.loop_start()
+    runtime_health = RuntimeHealth(config.trike_id)
+    runtime_health.start()
+    next_metrics_publish = 0.0
     while True:
+        if time.monotonic() >= next_metrics_publish:
+            client.publish(f"{base_topic}/system_metrics", payload=encode_payload(runtime_health.snapshot()),
+                           qos=1, retain=True)
+            next_metrics_publish = time.monotonic() + METRICS_INTERVAL
         for topic_suffix, unit in units.items():
             topic = f"{base_topic}/{topic_suffix}"
             process = service_health(unit)
