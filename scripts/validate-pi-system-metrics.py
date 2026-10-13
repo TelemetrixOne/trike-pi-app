@@ -42,6 +42,7 @@ def received(_c, _u, message):
         assert not data['errors'], data['errors']
         assert 0 <= data['cpu_usage_pct'] <= 100
         assert 0 <= data['memory_used_pct'] <= 100
+        assert 0 <= data['disk_used_pct'] <= 100
         assert -40 <= data['cpu_temperature_c'] <= 150
         assert data['logs_complete'] and data['logs_window_seconds'] == 1800
         assert type(data['warnings_count']) is int and data['warnings_count'] >= 0

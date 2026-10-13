@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import threading
 import time
@@ -43,6 +44,13 @@ def memory_usage(text: str) -> float:
         raise ValueError('Invalid memory counters')
     # Includes reclaimable cache as available, matching the existing health agent.
     return round(100 * (total - available) / total, 1)
+
+
+def disk_usage() -> float:
+    usage = shutil.disk_usage('/')
+    if usage.total <= 0 or not 0 <= usage.used <= usage.total:
+        raise ValueError('Invalid filesystem counters')
+    return round(100 * usage.used / usage.total, 1)
 
 
 def journal_counts() -> tuple[int, int]:
@@ -91,6 +99,7 @@ class RuntimeHealth:
     def base(self) -> dict:
         return {'schema': 'hpr.pi_system_metrics.v1', 'trike_id': self.trike_id,
                 'cpu_usage_pct': None, 'memory_used_pct': None, 'cpu_temperature_c': None,
+                'disk_used_pct': None,
                 'logs_window_seconds': LOG_WINDOW_SECONDS, 'logs_scope': 'system_journal',
                 'logs_refresh_seconds': LOG_INTERVAL, 'sample_interval_seconds': METRICS_INTERVAL,
                 **self.logs, 'observed_at': None, 'errors': ['not_sampled']}
@@ -110,6 +119,10 @@ class RuntimeHealth:
             data['memory_used_pct'] = memory_usage(Path('/proc/meminfo').read_text())
         except (OSError, ValueError, KeyError):
             errors.append('memory_read_failed')
+        try:
+            data['disk_used_pct'] = disk_usage()
+        except (OSError, ValueError):
+            errors.append('disk_read_failed')
         try:
             temp = int(Path('/sys/class/thermal/thermal_zone0/temp').read_text()) / 1000
             if not -40 <= temp <= 150:

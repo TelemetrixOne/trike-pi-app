@@ -12,6 +12,7 @@ credentials or trike identity are hard-coded, and existing health topics are unc
   "cpu_usage_pct": 30.1,
   "memory_used_pct": 35.9,
   "cpu_temperature_c": 28.7,
+  "disk_used_pct": 5.7,
   "warnings_count": 0,
   "errors_count": 0,
   "logs_window_seconds": 1800,
@@ -30,6 +31,8 @@ all cores, calculated from successive `/proc/stat` counters (not load average).
 It excludes idle/iowait and does not double-count guest time. RAM is
 `100 * (MemTotal - MemAvailable) / MemTotal`, allowing reclaimable caches. Temperature
 comes from the Pi thermal sensor, in Celsius.
+`disk_used_pct` is used bytes divided by total bytes on the root filesystem (`/`),
+expressed as a percentage and refreshed with the other resource values.
 
 Warnings are journal priority 4; errors include priorities 0–3. These are counts of
 entries, not distinct faults, over a rolling 30-minute window in the **system** journal
@@ -43,8 +46,8 @@ single additional message is published approximately every ten seconds; collecto
 do not actuate hardware, restart services, create discovery entities, or modify
 configuration/Home Assistant. The separate existing live health agent is untouched.
 
-Web integration: add four items in Pi Services Health, styled like existing items:
-CPU %, RAM %, Temperature °C, Logs with separate warning/error counts labelled
+Web integration: add five items in Pi Services Health, styled like existing items:
+CPU %, RAM %, Temperature °C, Disk used %, Logs with separate warning/error counts labelled
 “last 30 minutes”. Treat null as unavailable, not zero. Check `observed_at` for
 staleness (e.g. more than 30 seconds old); for logs also require `logs_complete`
 and recent `logs_observed_at` (e.g. within 120 seconds). CPU requires two samples,

@@ -9,6 +9,26 @@ from hpr_gateway import runtime_health as health
 
 
 class RuntimeHealthTests(unittest.TestCase):
+    def test_root_filesystem_percentage(self):
+        with patch.object(health.shutil, 'disk_usage', return_value=SimpleNamespace(total=1000, used=57)) as read:
+            self.assertEqual(health.disk_usage(), 5.7)
+            read.assert_called_once_with('/')
+        with patch.object(health.shutil, 'disk_usage', return_value=SimpleNamespace(total=0, used=0)):
+            with self.assertRaises(ValueError):
+                health.disk_usage()
+
+    def test_unavailable_disk_is_null_and_does_not_hide_other_metrics(self):
+        monitor = health.RuntimeHealth('trike-test')
+        with patch.object(health.Path, 'read_text', self.read), \
+                patch.object(health, 'disk_usage', side_effect=OSError('unavailable')), \
+                patch.object(health, 'journal_counts', return_value=(0, 0)):
+            monitor.collect()
+        data = monitor.snapshot()
+        self.assertIsNone(data['disk_used_pct'])
+        self.assertIn('disk_read_failed', data['errors'])
+        self.assertEqual(data['memory_used_pct'], 35)
+        self.assertTrue(data['logs_complete'])
+
     def test_cpu_is_aggregate_not_load_or_sum_of_core_percentages(self):
         before = health.cpu_counters('cpu 100 0 100 700 100 0 0 0 50 0\ncpu0 1')
         after = health.cpu_counters('cpu 140 0 120 730 110 0 0 0 70 0')
