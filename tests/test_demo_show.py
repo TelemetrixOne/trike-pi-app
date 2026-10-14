@@ -67,10 +67,14 @@ class DemoShowTests(unittest.TestCase):
         statuses = []
         commands = []
         clock = [0.0]
+        horn_times = []
         show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
 
         def send(name, value):
-            clock[0] += 0.025  # Model a responsive acknowledged command.
+            if name == 'horn':
+                horn_times.append((clock[0], value))
+            # Include the real configured DRS transition plus acknowledgement.
+            clock[0] += 0.55 if name == 'drs' else 0.025
             commands.append((name, value))
             if name == "horn":
                 show.states["horn/state"] = value
@@ -93,6 +97,9 @@ class DemoShowTests(unittest.TestCase):
                 patch('hpr_gateway.services.demo_show.time.sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
             show.play(str(uuid.uuid4()))
         self.assertAlmostEqual(clock[0], 10.0)
+        for (on_at, on), (off_at, off) in zip(horn_times[0:16:2], horn_times[1:16:2]):
+            self.assertEqual((on, off), ('ON', 'OFF'))
+            self.assertGreaterEqual(off_at - on_at, 0.17)
         self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
         self.assertEqual(commands.count(("drs", "OPEN")), 2)
         self.assertEqual(commands.count(("horn", "ON")), 8)
