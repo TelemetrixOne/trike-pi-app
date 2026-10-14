@@ -1,9 +1,10 @@
 import json
 import unittest
 import uuid
+from unittest.mock import patch
 
 from hpr_gateway.services.demo_show import (
-    DemoShow, SHOW_CUES, SHOW_END_SECONDS, eligible, parse_request,
+    DemoShow, SHOW_CUES, SHOW_END_SECONDS, SHOW_DURATION_SECONDS, eligible, parse_request,
 )
 
 
@@ -11,9 +12,12 @@ class DemoShowTests(unittest.TestCase):
     def test_choreography_is_ordered_and_leaves_room_for_restoration(self):
         times = [when for when, _, _ in SHOW_CUES]
         self.assertEqual(times, sorted(times))
-        self.assertGreaterEqual(times[0], 1.5)
+        self.assertEqual(times[0], 1.0)
         self.assertLess(times[-1], SHOW_END_SECONDS)
-        self.assertLess(SHOW_END_SECONDS, 20)
+        self.assertEqual(SHOW_DURATION_SECONDS, 10)
+        self.assertLess(SHOW_END_SECONDS, SHOW_DURATION_SECONDS)
+        drs_times = [when for when, name, _ in SHOW_CUES if name == 'drs']
+        self.assertTrue(all(b - a >= 2 for a, b in zip(drs_times, drs_times[1:])))
         self.assertEqual([value for _, name, value in SHOW_CUES if name == "drs"],
                          ["OPEN", "CLOSED", "OPEN", "CLOSED"])
         self.assertEqual([value for _, name, value in SHOW_CUES if name == "horn"].count("ON"), 8)
@@ -62,9 +66,11 @@ class DemoShowTests(unittest.TestCase):
         }
         statuses = []
         commands = []
+        clock = [0.0]
         show.status = lambda state, request_id=None, reason=None: statuses.append((state, reason))
 
         def send(name, value):
+            clock[0] += 0.025  # Model a responsive acknowledged command.
             commands.append((name, value))
             if name == "horn":
                 show.states["horn/state"] = value
@@ -82,12 +88,15 @@ class DemoShowTests(unittest.TestCase):
                 show.states["drs/state"] = "OPEN" if value == "OPEN" else "CLOSE"
 
         show.send = send
-        show.wait_until = lambda _start, _seconds: None
-        show.play(str(uuid.uuid4()))
+        show.wait_until = DemoShow.wait_until
+        with patch('hpr_gateway.services.demo_show.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('hpr_gateway.services.demo_show.time.sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            show.play(str(uuid.uuid4()))
+        self.assertAlmostEqual(clock[0], 10.0)
         self.assertEqual(commands[:2], [("aux_lights", "OFF"), ("headlight", "OFF")])
         self.assertEqual(commands.count(("drs", "OPEN")), 2)
         self.assertEqual(commands.count(("horn", "ON")), 8)
-        self.assertEqual(commands.count(("headlight", "ON")), 7)  # six flashes plus requested-state restoration
+        self.assertEqual(commands.count(("headlight", "ON")), 6)  # five accents plus requested-state restoration
         self.assertEqual(statuses[-1], ("completed", None))
         self.assertEqual(show.states["horn/state"], "OFF")
         self.assertEqual(show.states["aux_lights/requested_state"], "ON")

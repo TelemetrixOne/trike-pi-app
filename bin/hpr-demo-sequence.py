@@ -116,7 +116,7 @@ def main(argv=None):
         parser.error("--timeout must be positive")
     if not args.yes:
         try:
-            answer = input("Run the 20-second lights, horn and DRS demo? Type YES: ")
+            answer = input("Run the 10-second lights, horn and DRS demo? Type YES: ")
         except EOFError:
             answer = ""
         if answer != "YES":

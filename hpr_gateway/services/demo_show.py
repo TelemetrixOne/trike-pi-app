@@ -18,36 +18,38 @@ LOG = logging.getLogger(__name__)
 
 # Seconds from the accepted request. Each cue is an existing GPIO-control
 # command; the demo never drives a pin directly. Leave time for restoration
-# before the roughly 20-second finish.
-SHOW_END_SECONDS = 19.2
+# before the nominal 10-second finish. Do not compress actuator movement into
+# rapid chatter: DRS direction changes remain at least two seconds apart.
+SHOW_DURATION_SECONDS = 10.0
+SHOW_END_SECONDS = 9.2
 SHOW_CUES = (
-    (1.50, "aux_lights", "ON"), (1.85, "aux_lights", "OFF"),
-    (2.10, "headlight", "ON"), (2.45, "headlight", "OFF"),
-    (2.75, "aux_lights", "ON"), (3.05, "aux_lights", "OFF"),
-    (3.30, "headlight", "ON"), (3.35, "aux_lights", "ON"),
-    (4.10, "horn", "ON"), (4.38, "horn", "OFF"),
-    (4.65, "drs", "OPEN"),
-    (5.10, "aux_lights", "OFF"), (5.40, "headlight", "OFF"),
-    (6.05, "aux_lights", "ON"), (6.35, "aux_lights", "OFF"),
-    (7.00, "drs", "CLOSED"),
-    (7.25, "horn", "ON"), (7.45, "horn", "OFF"),
-    (7.70, "horn", "ON"), (7.92, "horn", "OFF"),
-    (8.25, "headlight", "ON"), (8.55, "headlight", "OFF"),
-    (8.80, "aux_lights", "ON"), (9.12, "aux_lights", "OFF"),
-    (9.40, "horn", "ON"), (9.78, "horn", "OFF"),
-    (10.20, "headlight", "ON"), (10.30, "aux_lights", "ON"),
-    (11.35, "drs", "OPEN"),
-    (11.75, "horn", "ON"), (12.00, "horn", "OFF"),
-    (12.55, "aux_lights", "OFF"), (13.00, "headlight", "OFF"),
-    (13.40, "aux_lights", "ON"), (13.72, "aux_lights", "OFF"),
-    (14.10, "horn", "ON"), (14.30, "horn", "OFF"),
-    (14.55, "horn", "ON"), (14.78, "horn", "OFF"),
-    (15.10, "drs", "CLOSED"),
-    (15.55, "headlight", "ON"), (15.85, "headlight", "OFF"),
-    (16.25, "aux_lights", "ON"), (16.55, "aux_lights", "OFF"),
-    (16.90, "headlight", "ON"), (17.00, "aux_lights", "ON"),
-    (17.65, "horn", "ON"), (18.00, "horn", "OFF"),
-    (18.20, "aux_lights", "OFF"), (18.45, "headlight", "OFF"),
+    # Ignition chase: auxiliary, then main, then DRS reveal.
+    (1.00, "aux_lights", "ON"), (1.25, "aux_lights", "OFF"),
+    (1.50, "headlight", "ON"), (1.85, "headlight", "OFF"),
+    (2.00, "drs", "OPEN"),
+    # Double hit, then a syncopated response with the auxiliary lights.
+    (2.35, "headlight", "ON"), (2.35, "aux_lights", "ON"),
+    (2.35, "horn", "ON"), (2.58, "horn", "OFF"),
+    (2.80, "horn", "ON"), (3.03, "horn", "OFF"),
+    (3.20, "headlight", "OFF"), (3.23, "aux_lights", "OFF"),
+    (3.50, "aux_lights", "ON"), (3.50, "horn", "ON"),
+    (3.72, "horn", "OFF"), (3.75, "aux_lights", "OFF"),
+    (4.00, "drs", "CLOSED"),
+    # Alternating call-and-response, then both lights build together.
+    (4.45, "headlight", "ON"), (4.45, "horn", "ON"),
+    (4.67, "horn", "OFF"), (4.90, "headlight", "OFF"),
+    (5.10, "aux_lights", "ON"), (5.10, "horn", "ON"),
+    (5.33, "horn", "OFF"), (5.58, "aux_lights", "OFF"),
+    (5.85, "headlight", "ON"), (5.85, "aux_lights", "ON"),
+    (6.10, "drs", "OPEN"),
+    (6.50, "horn", "ON"), (6.72, "horn", "OFF"),
+    (6.95, "headlight", "OFF"), (7.10, "aux_lights", "OFF"),
+    # Finale: main-light accent, full-light reveal, DRS close, final horn hit.
+    (7.40, "headlight", "ON"), (7.40, "horn", "ON"),
+    (7.62, "horn", "OFF"), (7.85, "aux_lights", "ON"),
+    (8.15, "drs", "CLOSED"),
+    (8.50, "horn", "ON"), (8.80, "horn", "OFF"),
+    (8.85, "aux_lights", "OFF"), (8.90, "headlight", "OFF"),
 )
 
 
@@ -234,6 +236,8 @@ class DemoShow:
                 except Exception:
                     LOG.exception("Unable to restore %s after demo", name)
                     failure = f"restoration of {name} failed"
+            if failure is None:
+                self.wait_until(started, SHOW_DURATION_SECONDS)
             self.status("failed" if failure else "completed", request_id, failure)
 
     def run(self) -> int:

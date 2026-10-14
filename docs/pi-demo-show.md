@@ -39,15 +39,18 @@ The Pi accepts a demo when it has complete GPIO state and the momentary horn
 is idle. It does not require GPS, stationary confirmation, or a particular
 physical-switch position. It snapshots the headlight mode/requested state,
 auxiliary-light requested state, and DRS mode. Lights and DRS modes can be
-temporarily overridden. It requests a 1.5-second blackout first, checking
+temporarily overridden. It requests a one-second blackout first, checking
 the headlight's effective GPIO state and its separate feedback input are OFF.
 If the headlamp feedback stays ON, the demo fails before any horn or DRS action
-and restores the original settings. A roughly 20-second cue schedule then
-mixes alternating and paired light flashes, eight varied fixed-pitch horn pulses,
-and two spaced DRS open/close movements. It closes with all demo lights and
+and restores the original settings. A nominal ten-second sequence mixes an
+ignition light chase, eight syncopated fixed-pitch horn hits, alternating light
+responses, two spaced DRS open/close movements and a combined-light finale.
+DRS direction changes remain at least two seconds apart. It closes with all demo lights and
 the horn off before restoring the original headlight, auxiliary-light, and DRS
 modes. Timing is best-effort because each command waits for an acknowledgement;
-the restore phase is reserved at the end. An error aborts the show and still
+the restore phase starts at 9.2 seconds and completion is nominally at ten seconds.
+Slow acknowledgements or restoration faults can extend this; safe restoration
+takes priority over a hard time cutoff. An error aborts the show and still
 runs restoration. A physical switch may continue to force an output (including
 auxiliary lights), and an already-active momentary horn
 pulse cannot be restored to its exact remaining duration. There is no direct
