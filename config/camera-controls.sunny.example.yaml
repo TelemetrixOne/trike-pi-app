@@ -1,0 +1,25 @@
+# SUNNY DAY ONLY: fixed 1/1000-second exposure, minimum gain.
+# Return to auto_exposure: 3 and REMOVE exposure_time_absolute before dusk/night.
+# Retains the inspected local brightness, contrast and other picture settings.
+front:
+  brightness: -30
+  contrast: 36
+  gamma: 100
+  saturation: 57
+  sharpness: 10
+  backlight_compensation: 0
+  auto_exposure: 1
+  exposure_time_absolute: 10
+  gain: 0
+  white_balance_automatic: 1
+rear:
+  brightness: -30
+  contrast: 36
+  gamma: 100
+  saturation: 57
+  sharpness: 10
+  backlight_compensation: 0
+  auto_exposure: 1
+  exposure_time_absolute: 10
+  gain: 0
+  white_balance_automatic: 1
