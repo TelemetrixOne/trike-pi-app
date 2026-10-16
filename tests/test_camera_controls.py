@@ -62,7 +62,7 @@ class CameraControlsTests(unittest.TestCase):
         data = video.load_picture_controls(Path(__file__).parents[1] / 'config/camera-controls.sunny.example.yaml')
         self.assertEqual(data['front'], data['rear'])
         self.assertEqual(data['front']['auto_exposure'], 1)
-        self.assertEqual(data['front']['exposure_time_absolute'], 10)
+        self.assertEqual(data['front']['exposure_time_absolute'], 1)
         self.assertEqual(data['front']['gain'], 0)
 
     def test_menu_and_boolean_capabilities(self):

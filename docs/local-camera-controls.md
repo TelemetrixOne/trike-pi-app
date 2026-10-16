@@ -33,8 +33,8 @@ the service is restarted. If a camera is absent, the other remains independent.
 Duplicate camera/control keys are rejected rather than silently replacing a value.
 
 For specifically bright sunshine, `config/camera-controls.sunny.example.yaml`
-provides fixed 1/1000-second exposure (`auto_exposure: 1`,
-`exposure_time_absolute: 10`), minimum gain and the inspected local brightness -30.
+provides fixed 1/10000-second exposure (`auto_exposure: 1`,
+`exposure_time_absolute: 1`), minimum gain and the inspected local brightness -30.
 This is a trial preset, not a universal day/night setup. These cameras expose no
 automatic exposure-bias control, so this preset necessarily disables automatic
 exposure. It can be too dark in shade and is unsuitable for dusk/night without
