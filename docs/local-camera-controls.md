@@ -33,12 +33,14 @@ the service is restarted. If a camera is absent, the other remains independent.
 Duplicate camera/control keys are rejected rather than silently replacing a value.
 
 For specifically bright sunshine, `config/camera-controls.sunny.example.yaml`
-provides fixed 1/10000-second exposure (`auto_exposure: 1`,
-`exposure_time_absolute: 1`), minimum gain and the inspected local brightness -30.
-This is a trial preset, not a universal day/night setup. These cameras expose no
-automatic exposure-bias control, so this preset necessarily disables automatic
-exposure. It can be too dark in shade and is unsuitable for dusk/night without
-retuning. To restore automatic exposure, set `auto_exposure: 3` and **remove**
+retains automatic exposure, minimum gain and automatic white balance, with
+brightness -35, contrast 36 and gamma 60. This is a trial preset, not a calibrated
+universal day/night setup. These cameras expose no automatic exposure-bias control.
+Live manual-exposure trials did not reliably improve the washed-out image, so
+fixed shutter settings were not retained. Gamma/brightness alter appearance but
+cannot recover already clipped highlight detail. Retest in shade and at night;
+restore the backed-up local profile if visibility is worse. When switching back
+from any manual exposure test, set `auto_exposure: 3` and **remove**
 `exposure_time_absolute` in each section; do not leave both in conflict.
 The supported `scripts/apply-pi-camera-profile.sh PROFILE.yaml` validates controls,
 backs up local/central configuration and applies a profile through hot reload,

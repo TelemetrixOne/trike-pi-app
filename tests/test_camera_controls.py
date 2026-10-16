@@ -58,11 +58,12 @@ class CameraControlsTests(unittest.TestCase):
         self.assertEqual(data['front'], data['rear'])
         self.assertEqual(data['front']['auto_exposure'], 3)
 
-    def test_sunny_profile_has_explicit_manual_exposure_and_minimum_gain(self):
+    def test_sunny_profile_preserves_automatic_exposure_and_minimum_gain(self):
         data = video.load_picture_controls(Path(__file__).parents[1] / 'config/camera-controls.sunny.example.yaml')
         self.assertEqual(data['front'], data['rear'])
-        self.assertEqual(data['front']['auto_exposure'], 1)
-        self.assertEqual(data['front']['exposure_time_absolute'], 1)
+        self.assertEqual(data['front']['auto_exposure'], 3)
+        self.assertNotIn('exposure_time_absolute', data['front'])
+        self.assertEqual(data['front']['gamma'], 60)
         self.assertEqual(data['front']['gain'], 0)
 
     def test_menu_and_boolean_capabilities(self):
