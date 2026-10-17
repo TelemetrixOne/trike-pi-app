@@ -3,4 +3,4 @@
 front:
   stream_size: 1280x720
   output_framerate: 30
-  bitrate: 2000k
+  bitrate: 2500k
