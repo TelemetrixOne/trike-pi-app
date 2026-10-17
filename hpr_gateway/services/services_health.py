@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import threading
 import time
@@ -153,6 +154,51 @@ def legacy_overall(overall: str) -> str:
     return "Good" if overall == "Disabled" else overall
 
 
+def pedal_evidence(status: object, status_age: float | None, power: object,
+                   data_age: float | None) -> dict:
+    """Live notifications prove a link even if its non-retained connect was missed.
+
+    A newer explicit disconnection supersedes the last sample immediately;
+    an old disconnection/battery warning cannot override subsequent live data.
+    """
+    reported = state_from(status)
+    try:
+        valid_power = not isinstance(power, bool) and math.isfinite(float(power))
+    except (ValueError, TypeError, OverflowError):
+        valid_power = False
+    fresh = valid_power and data_age is not None and 0 <= data_age <= 20
+    explicit_down = reported in {"disconnected", "not_found", "connecting", "offline"}
+    newer_down = explicit_down and status_age is not None and (
+        data_age is None or status_age <= data_age)
+    if fresh and not newer_down:
+        state, evidence = "connected", "fresh_power_notification"
+    elif explicit_down:
+        state, evidence = "disconnected", "status"
+    elif reported == "connected":
+        state, evidence = "connected", "status"
+    else:
+        state, evidence = "unknown", "no_connection_evidence"
+    return {"state": state, "reported_state": reported, "connection_evidence": evidence,
+            "data_age_seconds": data_age, "status_age_seconds": status_age,
+            "data_fresh": fresh and not newer_down}
+
+
+def pedal_health_detail(process: str, race_enabled: bool, readings: list[dict], trike_id: str) -> dict:
+    fresh = bool(readings) and all(r["data_fresh"] for r in readings)
+    connected = bool(readings) and all(r["state"] == "connected" for r in readings)
+    device = "connected" if connected else "disconnected" if any(
+        r["state"] == "disconnected" for r in readings) else "unknown"
+    if process != "Good":
+        device = "unknown"
+    return {"schema": "hpr.service_health.v2", "trike_id": trike_id,
+            "service": "power_cadence", "process": "running" if process == "Good" else process.lower(),
+            "device": device, "data": "fresh" if fresh else "stale",
+            "overall": sensor_overall(process, race_enabled, fresh, connected and not fresh),
+            "reason": "power_notifications_fresh" if fresh else "no_recent_power_notifications",
+            "expected": race_enabled, "devices": readings,
+            "observed_at": datetime.now(timezone.utc).isoformat()}
+
+
 def selected_tpms_names(assignment: object, available: set[str]) -> tuple[list[str], str | None]:
     """Validate HA's authoritative three-wheel to physical-sensor assignment."""
     if not isinstance(assignment, dict):
@@ -269,19 +315,15 @@ def main() -> int:
                 client.publish(topic, payload=legacy_overall(overall), qos=1, retain=True)
                 client.publish(f"{base_topic}/tpms_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "power_cadence_health":
-                pedal_states = [state_from(statuses.get(t)[0]) for t in pedal_status_topics]
-                data_ages = [age_seconds(statuses.get(t)[1]) for t in pedal_data_topics]
-                fresh = bool(data_ages) and all(age is not None and age <= 20 for age in data_ages)
-                connected = bool(pedal_states) and all(state == "connected" for state in pedal_states)
-                overall = sensor_overall(process, race_enabled, fresh, connected and not fresh)
-                detail = {"schema": "hpr.service_health.v2", "trike_id": config.trike_id,
-                          "service": "power_cadence", "process": "running" if process == "Good" else process.lower(),
-                          "device": "connected" if connected else "disconnected", "data": "fresh" if fresh else "stale",
-                          "overall": overall, "reason": "power_notifications_fresh" if fresh else "no_recent_power_notifications",
-                          "expected": race_enabled, "devices": [{"status_topic": s, "state": state, "data_age_seconds": age}
-                          for s, state, age in zip(pedal_status_topics, pedal_states, data_ages)],
-                          "observed_at": datetime.now(timezone.utc).isoformat()}
-                client.publish(topic, payload=legacy_overall(overall), qos=1, retain=True)
+                readings = []
+                for status_topic, data_topic in zip(pedal_status_topics, pedal_data_topics):
+                    status, status_received = statuses.get(status_topic)
+                    power, data_received = statuses.get(data_topic)
+                    readings.append({"status_topic": status_topic,
+                                     **pedal_evidence(status, age_seconds(status_received),
+                                                      power, age_seconds(data_received))})
+                detail = pedal_health_detail(process, race_enabled, readings, config.trike_id)
+                client.publish(topic, payload=legacy_overall(detail["overall"]), qos=1, retain=True)
                 client.publish(f"{base_topic}/power_cadence_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "heart_rate_health":
                 hr_status_value, _ = statuses.get(hr_status_topic)
