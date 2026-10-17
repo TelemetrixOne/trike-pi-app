@@ -5,12 +5,17 @@ from central race/trike configuration and USB picture controls. Current front:
 
 ```yaml
 front:
-  stream_size: 800x450
-  output_framerate: 25
-  bitrate: 1500k
+  stream_size: 1280x720
+  output_framerate: 30
+  bitrate: 4000k
 ```
 
 Rear is omitted and keeps its central settings (currently 640x360, 25 fps, 700k).
+The approved profile is `config/video-local.front-1280x720.yaml`. Apply future
+quality profiles with `scripts/apply-pi-local-video.sh PROFILE.yaml`; it merges only
+specified quality fields, preserves unmentioned roles and settings, backs up the
+current file and automatically restores it if validation fails. The earlier
+800x450/25/1500k profile remains in the repository as a historical alternative.
 Front device identity, rotation, stream path, credentials, capture geometry and
 HDMI configuration remain central; only quality fields listed above are local.
 No web configuration section or Home Assistant changes are needed.

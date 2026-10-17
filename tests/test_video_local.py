@@ -65,3 +65,8 @@ class VideoLocalTests(unittest.TestCase):
         effective = local.merge_local(self.video, local.read_local(str(root / 'video-local.front-800x450.yaml')))
         self.assertEqual(effective['cameras']['front']['stream_size'], '800x450')
         self.assertEqual(effective['cameras']['front']['bitrate'], '1500k')
+        effective = local.merge_local(self.video, local.read_local(str(root / 'video-local.front-1280x720.yaml')))
+        self.assertEqual(effective['cameras']['front']['stream_size'], '1280x720')
+        self.assertEqual(effective['cameras']['front']['output_framerate'], 30)
+        self.assertEqual(effective['cameras']['front']['bitrate'], '4000k')
+        self.assertEqual(effective['cameras']['rear'], self.video['cameras']['rear'])
