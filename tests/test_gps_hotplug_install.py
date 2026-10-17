@@ -11,6 +11,11 @@ class GpsHotplugInstallTests(unittest.TestCase):
         self.assertIn("while [ ! -e \"\\$GPS_DEVICE\" ]", installer)
         self.assertIn("systemctl restart gpsd.service; systemctl restart hpr-gps.service", installer)
 
+    def test_designated_receiver_has_one_hotplug_owner(self):
+        installer = (ROOT / "scripts" / "install-pi-gateway.sh").read_text(encoding="utf-8")
+        self.assertIn('ENV{SYSTEMD_WANTS}="hpr-gps-hotplug.service"', installer)
+        self.assertNotIn('ENV{SYSTEMD_WANTS}+="hpr-gps-hotplug.service"', installer)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -342,7 +342,9 @@ ExecStart=/bin/sh -ec 'i=0; while [ ! -e "\$GPS_DEVICE" ] && [ \$i -lt 30 ]; do 
 EOF
 
     cat > /etc/udev/rules.d/99-hpr-gps-hotplug.rules <<EOF
-ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="${vendor_id}", ATTRS{idProduct}=="${product_id}", TAG+="systemd", ENV{SYSTEMD_WANTS}+="hpr-gps-hotplug.service"
+# Single owner for this receiver: replace the earlier gpsdctl@ request.
+# USBAUTO remains available for unrelated GPS devices.
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="${vendor_id}", ATTRS{idProduct}=="${product_id}", TAG+="systemd", ENV{SYSTEMD_WANTS}="hpr-gps-hotplug.service"
 EOF
   else
     rm -f /etc/systemd/system/hpr-gps-hotplug.service

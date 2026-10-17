@@ -4,13 +4,14 @@ import json
 import logging
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import gps
 
 from hpr_gateway.config import config_arg_parser, load_config
-from hpr_gateway.mqtt import connect_client
+from hpr_gateway.mqtt import make_client
 
 LOG = logging.getLogger("hpr_gps")
 NAV_SCHEMA = "hpr.nav.v1"
@@ -161,7 +162,48 @@ def is_real_receiver_report(report_class: Any) -> bool:
 
 
 def reconnect_delay(failure_count: int, initial_seconds: float, maximum_seconds: float) -> float:
-    return min(initial_seconds * (2 ** max(0, failure_count - 1)), maximum_seconds)
+    return min(initial_seconds * (2 ** min(30, max(0, failure_count - 1))), maximum_seconds)
+
+
+def valid_position(report: Any, published_at: datetime, max_age: float) -> bool:
+    mode = safe_int(report_value(report, "mode"), 0)
+    lat = safe_float(report_value(report, "lat"))
+    lon = safe_float(report_value(report, "lon"))
+    timestamp = parse_gps_time(report_value(report, "time"))
+    return bool(mode >= 2 and lat is not None and -90 <= lat <= 90
+                and lon is not None and -180 <= lon <= 180 and timestamp is not None
+                and -2 <= (published_at - timestamp).total_seconds() <= max_age)
+
+
+@dataclass
+class ReceiverHealth:
+    opened: float
+    last_receiver: float | None = None
+    last_tpv: float | None = None
+    last_fix: datetime | None = None
+    fix_mode: int = 0
+    position_valid: bool = False
+
+    def observe(self, report: Any, monotonic: float, wall: datetime, max_age: float) -> None:
+        if is_real_receiver_report(report_value(report, "class")):
+            self.last_receiver = monotonic
+        if report_value(report, "class") == "TPV":
+            self.last_tpv = monotonic
+            self.fix_mode = safe_int(report_value(report, "mode"), 0)
+            self.position_valid = valid_position(report, wall, max_age)
+            if self.position_valid:
+                self.last_fix = parse_gps_time(report_value(report, "time"))
+
+    def snapshot(self, monotonic: float, wall: datetime, max_age: float) -> dict:
+        receiver_age = None if self.last_receiver is None else monotonic - self.last_receiver
+        fix_age = None if self.last_fix is None else max(0.0, (wall - self.last_fix).total_seconds())
+        fresh_receiver = receiver_age is not None and receiver_age <= max_age
+        valid = bool(fresh_receiver and self.position_valid and fix_age is not None and fix_age <= max_age)
+        state = "online" if fresh_receiver else "connecting" if self.last_receiver is None else "stale"
+        reason = "position_fix" if valid else "no_position_fix" if fresh_receiver else "no_receiver_data"
+        return {"state": state, "reason": reason, "fix_valid": valid,
+                "fix_mode": self.fix_mode, "fix_age_seconds": fix_age,
+                "receiver_age_seconds": receiver_age, "observed_at": utc_iso(wall)}
 
 
 def main() -> int:
@@ -175,28 +217,45 @@ def main() -> int:
     wait_timeout = float(config.get("gps.wait_timeout_seconds", 0.5))
     reconnect_initial = float(config.get("gps.reconnect_initial_seconds", 1.0))
     reconnect_max = float(config.get("gps.reconnect_max_seconds", 15.0))
-    client = connect_client(
-        config,
-        f"hpr-{config.trike_id}-gps",
-        will_topic=status_topic,
-        will_payload=json.dumps({"state": "offline", "reason": "mqtt_last_will"}),
-        will_qos=1,
-        will_retain=True,
-    )
+    client = make_client(config, f"hpr-{config.trike_id}-gps")
+    client.max_queued_messages_set(100)
+    client.reconnect_delay_set(min_delay=1, max_delay=15)
+    client.will_set(status_topic, json.dumps({"state": "offline", "reason": "mqtt_last_will"}), qos=1, retain=True)
+    # Network/broker startup must not kill receiver observation. Paho retries
+    # in its network thread; the bounded queue prevents an outage memory leak.
+    client.connect_async(config.mqtt.host, config.mqtt.port, keepalive=60)
+    client.loop_start()
     client.publish(status_topic, payload=json.dumps({"state": "starting"}), qos=1, retain=True)
     seq = 0
     session = None
     last_real_report = 0.0
     consecutive_failures = 0
     receiver_active = False
+    health = ReceiverHealth(time.monotonic())
+    next_status = 0.0
+    last_reason = None
+    last_no_fix_warning = time.monotonic()
     while True:
         try:
+            stamp = time.monotonic()
+            status = health.snapshot(stamp, utc_now(), stale_timeout)
+            if stamp >= next_status or status["reason"] != last_reason:
+                client.publish(status_topic, payload=json.dumps(status), qos=1, retain=True)
+                next_status = stamp + 5.0
+                last_reason = status["reason"]
+            if status["fix_valid"]:
+                last_no_fix_warning = stamp
+            elif stamp - last_no_fix_warning >= 60:
+                LOG.warning("GPS has no fresh position fix: mode=%s receiver_age=%s",
+                            status["fix_mode"], status["receiver_age_seconds"])
+                last_no_fix_warning = stamp
             if session is None:
                 LOG.info("opening gpsd session")
                 session = gps.gps(mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE)
                 # A new session gets a full grace period. Reusing an old
                 # timestamp causes an immediate reopen loop after USB loss.
                 last_real_report = time.monotonic()
+                health = ReceiverHealth(last_real_report)
                 receiver_active = False
                 client.publish(
                     status_topic,
@@ -207,32 +266,32 @@ def main() -> int:
 
             if time.monotonic() - last_real_report > stale_timeout:
                 raise TimeoutError("no real GPS receiver data")
+            if time.monotonic() - (health.last_tpv if health.last_tpv is not None else health.opened) > max(15.0, stale_timeout * 3):
+                raise TimeoutError("no TPV reports despite gpsd session")
 
             if not session.waiting(timeout=wait_timeout):
                 continue
 
             report = session.next()
             report_class = report_value(report, "class")
+            health.observe(report, time.monotonic(), utc_now(), stale_timeout)
             # VERSION/WATCH/DEVICES are gpsd handshakes, not proof that the
             # receiver survived a USB reconnect.
             if is_real_receiver_report(report_class):
                 last_real_report = time.monotonic()
                 if not receiver_active:
                     LOG.info("real GPS receiver data resumed")
-                    client.publish(
-                        status_topic,
-                        payload=json.dumps({"state": "online", "reason": "receiver_data"}),
-                        qos=1,
-                        retain=True,
-                    )
+                    next_status = 0.0
                     receiver_active = True
-                if consecutive_failures:
-                    LOG.info("GPS stream recovered after %d attempt(s)", consecutive_failures)
-                    consecutive_failures = 0
-
             if report_class != "TPV":
                 continue
 
+            if consecutive_failures:
+                LOG.info("GPS TPV stream recovered after %d attempt(s)", consecutive_failures)
+                consecutive_failures = 0
+
+            if not valid_position(report, utc_now(), stale_timeout):
+                continue
             payload = build_nav_payload(config, report, seq + 1)
             if payload is None:
                 continue

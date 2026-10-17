@@ -107,6 +107,36 @@ def sensor_overall(process: str, race_enabled: bool, good: bool, waiting: bool =
     return "Degraded" if waiting else "Failed"
 
 
+def gps_health_detail(process: str, source: object, age: float | None,
+                      race_enabled: bool, trike_id: str, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    observed_age = None
+    if isinstance(source, dict):
+        try:
+            timestamp = datetime.fromisoformat(str(source.get("observed_at", "")).replace("Z", "+00:00"))
+            observed_age = (now - timestamp).total_seconds()
+        except (ValueError, TypeError):
+            pass
+    fresh = age is not None and age <= 15 and observed_age is not None and -2 <= observed_age <= 15
+    device = state_from(source)
+    fix_age = source.get("fix_age_seconds") if isinstance(source, dict) else None
+    fix_valid = bool(fresh and device == "online" and isinstance(source, dict)
+                     and source.get("fix_valid") is True and isinstance(fix_age, (int, float))
+                     and 0 <= fix_age + max(0.0, observed_age) <= 10)
+    overall = sensor_overall(process, race_enabled, fix_valid,
+                             fresh and device in {"online", "starting", "connecting"})
+    reason = ("service_not_running" if process != "Good" else "gps_status_missing_or_stale"
+              if not fresh else "position_fix" if fix_valid else "no_position_fix"
+              if device == "online" else "no_receiver_data")
+    return {"schema": "hpr.service_health.v2", "trike_id": trike_id, "service": "gps",
+            "process": "running" if process == "Good" else process.lower(),
+            "device": device, "data": "fresh" if fix_valid else "no_fix" if fresh and device == "online" else "stale",
+            "overall": overall, "reason": reason, "source_reason": reason_from(source),
+            "status_age_seconds": age, "fix_valid": fix_valid, "fix_age_seconds": fix_age,
+            "fix_mode": source.get("fix_mode") if isinstance(source, dict) else None,
+            "expected": race_enabled, "observed_at": now.isoformat()}
+
+
 def legacy_overall(overall: str) -> str:
     """Keep existing Pit View cards quiet until their Disabled styling is deployed."""
     return "Good" if overall == "Disabled" else overall
@@ -200,27 +230,8 @@ def main() -> int:
                 client.publish(f"{base_topic}/gpio_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "gps_health":
                 source, received = statuses.get(gps_status_topic)
-                device = state_from(source)
-                source_reason = reason_from(source)
-                _observed, data, reason = derive_device_health(process, device)
-                overall = sensor_overall(process, race_enabled, device == "online",
-                                         device in {"unknown", "starting", "connecting"})
-                age = age_seconds(received)
-                detail = {
-                    "schema": "hpr.service_health.v2",
-                    "trike_id": config.trike_id,
-                    "service": "gps",
-                    "process": "running" if process == "Good" else process.lower(),
-                    "device": device or "unknown",
-                    "data": data,
-                    "overall": overall,
-                    "reason": reason,
-                    "source_reason": source_reason,
-                    "status_age_seconds": age,
-                    "expected": race_enabled,
-                    "observed_at": datetime.now(timezone.utc).isoformat(),
-                }
-                client.publish(topic, payload=legacy_overall(overall), qos=1, retain=True)
+                detail = gps_health_detail(process, source, age_seconds(received), race_enabled, config.trike_id)
+                client.publish(topic, payload=legacy_overall(detail["overall"]), qos=1, retain=True)
                 client.publish(f"{base_topic}/gps_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "tpms_health":
                 assignment, _ = statuses.get(tpms_assignment_topic)

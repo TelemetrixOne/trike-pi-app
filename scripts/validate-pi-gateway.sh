@@ -114,7 +114,7 @@ if [ "$(cfg services.gps.enabled --default false)" = "true" ] && \
       && grep -Fq 'systemctl restart gpsd.service; systemctl restart hpr-gps.service' "${hotplug_unit}" \
       && grep -Fq "ATTRS{idVendor}==\"${vendor_id}\"" "${hotplug_rule}" \
       && grep -Fq "ATTRS{idProduct}==\"${product_id}\"" "${hotplug_rule}" \
-      && grep -Fq 'hpr-gps-hotplug.service' "${hotplug_rule}"; then
+      && grep -Fq 'ENV{SYSTEMD_WANTS}="hpr-gps-hotplug.service"' "${hotplug_rule}"; then
       pass gps-hotplug-recovery "${vendor_id}:${product_id}"
     else
       fail gps-hotplug-recovery "unit or udev rule invalid"

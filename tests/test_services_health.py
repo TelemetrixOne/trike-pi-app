@@ -1,6 +1,29 @@
 import unittest
+from datetime import datetime, timezone, timedelta
 
-from hpr_gateway.services.services_health import gpio_health_detail
+from hpr_gateway.services.services_health import gpio_health_detail, gps_health_detail
+
+
+class GpsHealthTests(unittest.TestCase):
+    def setUp(self):
+        self.now = datetime.now(timezone.utc)
+        self.source = {"state": "online", "fix_valid": True, "fix_age_seconds": 0.1,
+                       "fix_mode": 3, "observed_at": self.now.isoformat()}
+
+    def test_only_fresh_fix_is_good(self):
+        self.assertEqual(gps_health_detail("Good", self.source, 1, True, "t", self.now)["overall"], "Good")
+        for source, age in (({**self.source, "fix_valid": False}, 1),
+                            ({**self.source, "fix_age_seconds": 20}, 1),
+                            ({**self.source, "observed_at": (self.now - timedelta(seconds=60)).isoformat()}, 0),
+                            ({"state": "online"}, 0), (self.source, 16), (None, None)):
+            with self.subTest(source=source, age=age):
+                self.assertNotEqual(gps_health_detail("Good", source, age, True, "t", self.now)["overall"], "Good")
+
+    def test_no_fix_is_degraded_and_stopped_process_stays_stopped(self):
+        nofix = {**self.source, "fix_valid": False}
+        self.assertEqual(gps_health_detail("Good", nofix, 1, True, "t", self.now)["overall"], "Degraded")
+        self.assertEqual(gps_health_detail("Stopped", self.source, 1, True, "t", self.now)["overall"], "Stopped")
+        self.assertEqual(gps_health_detail("Good", nofix, 1, False, "t", self.now)["overall"], "Disabled")
 
 
 class GpioHealthTests(unittest.TestCase):
