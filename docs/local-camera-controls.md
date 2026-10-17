@@ -6,6 +6,12 @@ Edit on the Pi:
 sudo nano /etc/hpr/camera-controls.yaml
 ```
 
+`config/camera-controls.defaults-minus30.example.yaml` is the defaults profile
+reported by both installed cameras, with only brightness offset to -30. In
+particular contrast is 32 and gain is 32 (not the previously tuned 36/0).
+Exposure and white balance remain automatic, so their inactive manual values
+are not managed. Apply with the profile application script described below.
+
 There are separate `front` and `rear` sections. Save integer picture-control values;
 the existing video service reloads within a few seconds without restarting feeds.
 Controls are applied to the resolved camera devices and reapplied after USB

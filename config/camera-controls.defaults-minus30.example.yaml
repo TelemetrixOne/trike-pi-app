@@ -1,0 +1,26 @@
+# Defaults reported by both installed USB cameras, except brightness -30.
+# Exposure time and colour temperature are inactive in the automatic modes.
+front:
+  brightness: -30
+  contrast: 32
+  saturation: 57
+  hue: 0
+  white_balance_automatic: 1
+  gamma: 100
+  gain: 32
+  power_line_frequency: 1
+  sharpness: 10
+  backlight_compensation: 0
+  auto_exposure: 3
+rear:
+  brightness: -30
+  contrast: 32
+  saturation: 57
+  hue: 0
+  white_balance_automatic: 1
+  gamma: 100
+  gain: 32
+  power_line_frequency: 1
+  sharpness: 10
+  backlight_compensation: 0
+  auto_exposure: 3

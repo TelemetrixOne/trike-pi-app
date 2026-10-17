@@ -66,6 +66,14 @@ class CameraControlsTests(unittest.TestCase):
         self.assertEqual(data['front']['gamma'], 60)
         self.assertEqual(data['front']['gain'], 0)
 
+    def test_defaults_profile_only_offsets_brightness(self):
+        data = video.load_picture_controls(Path(__file__).parents[1] / 'config/camera-controls.defaults-minus30.example.yaml')
+        expected = {'brightness': -30, 'contrast': 32, 'saturation': 57, 'hue': 0,
+                    'white_balance_automatic': 1, 'gamma': 100, 'gain': 32,
+                    'power_line_frequency': 1, 'sharpness': 10,
+                    'backlight_compensation': 0, 'auto_exposure': 3}
+        self.assertEqual(data, {'front': expected, 'rear': expected})
+
     def test_menu_and_boolean_capabilities(self):
         caps = video.parse_picture_capabilities(self.command('', '--list-ctrls-menus'))
         self.assertEqual(caps['auto_exposure']['choices'], [1, 3])
