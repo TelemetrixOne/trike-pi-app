@@ -7,7 +7,7 @@ from central race/trike configuration and USB picture controls. Current front:
 front:
   stream_size: 1280x720
   output_framerate: 30
-  bitrate: 3000k
+  bitrate: 2000k
 ```
 
 Rear is omitted and keeps its central settings (currently 640x360, 25 fps, 700k).
