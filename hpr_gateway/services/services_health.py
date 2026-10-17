@@ -108,7 +108,8 @@ def sensor_overall(process: str, race_enabled: bool, good: bool, waiting: bool =
 
 
 def gps_health_detail(process: str, source: object, age: float | None,
-                      race_enabled: bool, trike_id: str, now: datetime | None = None) -> dict:
+                      race_enabled: bool, trike_id: str, now: datetime | None = None,
+                      recovery: object = None, recovery_age: float | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     observed_age = None
     if isinstance(source, dict):
@@ -128,12 +129,22 @@ def gps_health_detail(process: str, source: object, age: float | None,
     reason = ("service_not_running" if process != "Good" else "gps_status_missing_or_stale"
               if not fresh else "position_fix" if fix_valid else "no_position_fix"
               if device == "online" else "no_receiver_data")
+    recovery_fresh = False
+    if isinstance(recovery, dict) and recovery_age is not None and recovery_age <= 15:
+        try:
+            recovery_observed = datetime.fromisoformat(str(recovery.get("observed_at", "")).replace("Z", "+00:00"))
+            recovery_fresh = -2 <= (now - recovery_observed).total_seconds() <= 15
+        except (TypeError, ValueError):
+            pass
+    if process == "Good" and race_enabled and not fix_valid and recovery_fresh and recovery.get("state") == "failed":
+        overall, reason = "Failed", "gps_recovery_unsuccessful"
     return {"schema": "hpr.service_health.v2", "trike_id": trike_id, "service": "gps",
             "process": "running" if process == "Good" else process.lower(),
             "device": device, "data": "fresh" if fix_valid else "no_fix" if fresh and device == "online" else "stale",
             "overall": overall, "reason": reason, "source_reason": reason_from(source),
             "status_age_seconds": age, "fix_valid": fix_valid, "fix_age_seconds": fix_age,
             "fix_mode": source.get("fix_mode") if isinstance(source, dict) else None,
+            "recovery": recovery if recovery_fresh else None,
             "expected": race_enabled, "observed_at": now.isoformat()}
 
 
@@ -169,6 +180,7 @@ def main() -> int:
     units = service.get("units", {})
     base_topic = config.resolve_topic(config.get("health.base_topic"), "pi")
     gps_status_topic = config.resolve_topic(config.get("gps.status_topic"), "nav", "status")
+    gps_recovery_topic = config.resolve_topic(config.get("gps.recovery_topic"), "nav", "recovery")
     race_mode_topic = f"hpr/{config.trike_id}/agents/health/enabled/state"
     hr_status_topic = f"hpr/{config.trike_id}/hr/status"
     hr_data_topic = f"hpr/{config.trike_id}/hr/json"
@@ -189,6 +201,7 @@ def main() -> int:
     source_topics = [
         race_mode_topic,
         gps_status_topic,
+        gps_recovery_topic,
         hr_status_topic,
         hr_data_topic,
         tpms_assignment_topic,
@@ -230,7 +243,9 @@ def main() -> int:
                 client.publish(f"{base_topic}/gpio_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "gps_health":
                 source, received = statuses.get(gps_status_topic)
-                detail = gps_health_detail(process, source, age_seconds(received), race_enabled, config.trike_id)
+                recovery, recovery_received = statuses.get(gps_recovery_topic)
+                detail = gps_health_detail(process, source, age_seconds(received), race_enabled, config.trike_id,
+                                           recovery=recovery, recovery_age=age_seconds(recovery_received))
                 client.publish(topic, payload=legacy_overall(detail["overall"]), qos=1, retain=True)
                 client.publish(f"{base_topic}/gps_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "tpms_health":

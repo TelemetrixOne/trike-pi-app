@@ -355,6 +355,15 @@ EOF
   udevadm control --reload-rules
   systemctl enable --now gpsd.socket
   systemctl restart gpsd.service
+  if [ "$(cfg gps.recovery_enabled --default true)" = "true" ]; then
+    sed -e "s|/opt/hpr/gateway|${INSTALL_ROOT}|g" \
+        -e "s|/etc/hpr/hpr.yaml|${CONFIG_PATH}|g" \
+        "${REPO_ROOT}/systemd/hpr-gps-recovery.service" > /etc/systemd/system/hpr-gps-recovery.service
+    systemctl daemon-reload
+    systemctl enable --now hpr-gps-recovery.service
+  elif [ -f /etc/systemd/system/hpr-gps-recovery.service ]; then
+    systemctl disable --now hpr-gps-recovery.service
+  fi
 }
 
 configure_gpsd

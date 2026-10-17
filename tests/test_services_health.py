@@ -25,6 +25,16 @@ class GpsHealthTests(unittest.TestCase):
         self.assertEqual(gps_health_detail("Stopped", self.source, 1, True, "t", self.now)["overall"], "Stopped")
         self.assertEqual(gps_health_detail("Good", nofix, 1, False, "t", self.now)["overall"], "Disabled")
 
+    def test_failed_recovery_is_failed_but_never_overrides_a_new_fix(self):
+        recovery = {"state": "failed", "observed_at": self.now.isoformat()}
+        for valid, expected in [(False, "Failed"), (True, "Good")]:
+            detail = gps_health_detail("Good", {**self.source, "fix_valid": valid}, 1, True, "t", self.now,
+                                       recovery, 1)
+            self.assertEqual(detail["overall"], expected)
+        recovery["observed_at"] = (self.now - timedelta(seconds=60)).isoformat()
+        detail = gps_health_detail("Good", {**self.source, "fix_valid": False}, 1, True, "t", self.now, recovery, 0)
+        self.assertEqual(detail["overall"], "Degraded")
+
 
 class GpioHealthTests(unittest.TestCase):
     def setUp(self):

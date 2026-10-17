@@ -120,6 +120,16 @@ if [ "$(cfg services.gps.enabled --default false)" = "true" ] && \
       fail gps-hotplug-recovery "unit or udev rule invalid"
     fi
   fi
+  if [ "$(cfg gps.recovery_enabled --default true)" = "true" ]; then
+    systemctl is-enabled hpr-gps-recovery.service >/dev/null 2>&1 \
+      && pass gps-fix-recovery-boot "enabled" \
+      || fail gps-fix-recovery-boot "not enabled"
+    if [ "${REQUIRE_ACTIVE}" = "true" ]; then
+      systemctl is-active --quiet hpr-gps-recovery.service \
+        && pass gps-fix-recovery "10s loss / 20s reacquisition / 60s cooldown" \
+        || fail gps-fix-recovery "watchdog inactive"
+    fi
+  fi
 fi
 
 role_output="$(PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" - "${CONFIG_PATH}" <<'PY'

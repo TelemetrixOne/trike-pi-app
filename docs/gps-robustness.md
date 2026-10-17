@@ -44,3 +44,32 @@ cold boot and extended track testing remain hardware checks. They must be
 scheduled, not induced mid-race. Future no-fix investigation should capture
 raw NAV-PVT/NAV-SAT and MON-RF before any recovery, plus gpsd and kernel logs,
 to distinguish RF/antenna loss from receiver firmware or serial ownership.
+
+## Fast fix-loss recovery (subsequent uplift)
+
+`hpr-gps-recovery.service` independently watches local gpsd TPVs, not MQTT, so
+network/broker outages never trigger receiver recovery. Ten seconds after the
+last actual valid fix timestamp it captures diagnostic evidence to the journal
+and requests restart of **only gpsd.service and hpr-gps.service**. The observer
+stays running while they restart. After twenty seconds without reacquisition it
+reports `failed` on the configuration-derived `nav/recovery` topic, which the
+existing GPS health card reflects as Failed while race monitoring is enabled.
+Fresh valid GPS always takes precedence over an older recovery failure.
+
+There is a minimum sixty-second interval between attempts, including after a
+watchdog process restart (timestamp persisted in its systemd StateDirectory).
+Cold boot gets an acquisition grace period until roughly sixty seconds after
+boot; restarting the watchdog later grants only ten seconds. Repeated or stale
+TPVs, SKY reports and network traffic cannot advance the last-fix clock.
+No receiver programming, USB reset, shared service restart or Pi reboot is
+permitted by this watchdog. Service restart cannot guarantee reacquisition.
+
+Deploy from the committed repository using
+`sudo bash scripts/update-pi-gps-fix-recovery.sh`. The guarded updater preserves
+central configuration and receiver settings, backs up affected state and rolls
+back on failed validation. It starts the watchdog and restarts only service
+health; it does not deliberately restart healthy GPS. Future fault-triggered
+restarts are exercised with deterministic mocks, not by breaking live race GPS.
+Cold boot and a controlled actual fix-loss recovery remain pit/bench tests.
+`gps.recovery_enabled` defaults to true and can be supplied through supported
+central configuration; endpoints/topics and identity remain configuration-derived.

@@ -1,0 +1,25 @@
+[Unit]
+Description=HPR bounded GPS fix-loss recovery
+After=gpsd.service hpr-gps.service
+Wants=gpsd.service hpr-gps.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hpr/gateway
+Environment=PYTHONPATH=/opt/hpr/gateway
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/hpr/gateway/venv/bin/python -m hpr_gateway.services.gps_recovery --config /etc/hpr/hpr.yaml
+StateDirectory=hpr-gps-recovery
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hpr-gps-recovery
+
+[Install]
+WantedBy=multi-user.target
