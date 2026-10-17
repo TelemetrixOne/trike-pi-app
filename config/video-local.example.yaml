@@ -1,0 +1,7 @@
+# Optional persistent local stream quality. Other settings remain central.
+# Uncomment a camera section, edit, then restart hpr-video-compositor.service.
+# front:
+#   stream_size: 800x450
+#   output_framerate: 25
+#   bitrate: 1500k
+{}

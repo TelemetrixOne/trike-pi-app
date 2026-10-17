@@ -1,0 +1,5 @@
+# Approved permanent front stream settings. Rear remains centrally configured.
+front:
+  stream_size: 800x450
+  output_framerate: 25
+  bitrate: 1500k

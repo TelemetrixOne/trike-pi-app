@@ -452,6 +452,12 @@ configure_video() {
     install -o root -g "${SERVICE_GROUP}" -m 0640 \
       "${INSTALL_ROOT}/config/camera-controls.example.yaml" /etc/hpr/camera-controls.yaml
   fi
+  # Preserve local stream-quality choices across normal redeployments.
+  # New installs get an empty file: no overrides are imposed on other trikes.
+  if [ ! -e /etc/hpr/video-local.yaml ]; then
+    install -o root -g "${SERVICE_GROUP}" -m 0640 \
+      "${INSTALL_ROOT}/config/video-local.example.yaml" /etc/hpr/video-local.yaml
+  fi
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml
