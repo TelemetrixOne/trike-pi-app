@@ -1,6 +1,7 @@
 # Front camera at its current native capture resolution and frame rate.
 # Rear is not overridden.
 front:
+  capture_size: 1280x720
   stream_size: 1280x720
   output_framerate: 30
   bitrate: 2500k

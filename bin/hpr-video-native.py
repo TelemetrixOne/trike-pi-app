@@ -465,6 +465,7 @@ def supervise(settings):
             while running[0]:
                 devices = resolve_devices(cameras)
                 for role, camera in cameras.items():
+                    camera_size = camera.get('capture_size', size)
                     device = devices.get(role)
                     try:
                         stat = os.stat(device) if device else None
@@ -487,16 +488,17 @@ def supervise(settings):
                     if identity:
                         socket = directory / (role + '.sock')
                         ensure(role + '-capture', 'capture', capture_pipeline(
-                            device, socket, size, fps, directory / 'display.sock' if role == 'front' else None))
+                            device, socket, camera_size, fps, directory / 'display.sock' if role == 'front' else None))
                         if socket.exists():
                             ensure(role + '-publish', 'publish', publisher_pipeline(
-                                socket, size, fps, camera, role, settings.get('rtsp_port', 8554)))
+                                socket, camera_size, fps, camera, role, settings.get('rtsp_port', 8554)))
                 controls.update_devices({role: (device, identities[role]) for role, device in devices.items()
                                          if identities.get(role)})
                 mode = display_mode() if display.get('enabled', True) else None
                 socket = directory / 'display.sock'
                 if mode and identities.get('front') and socket.exists():
-                    ensure('hdmi', 'display', display_pipeline(socket, size, fps, cameras['front'], mode))
+                    ensure('hdmi', 'display', display_pipeline(
+                        socket, cameras['front'].get('capture_size', size), fps, cameras['front'], mode))
                 else:
                     stop('hdmi')
                 write_json(root / 'video-status.json', {

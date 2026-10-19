@@ -57,11 +57,12 @@ class NativeVideoTests(unittest.TestCase):
         self.assertIn('width=640,height=360,framerate=25/1', publisher)
 
     def test_hdmi_hotplug_does_not_restart_publishers(self):
-        started, handlers, loops = [], {}, [0]
+        started, handlers, loops, pipelines = [], {}, [0], {}
 
         class FakeChild:
             def __init__(self, name, kind, description, directory):
                 started.append(name)
+                pipelines[name] = description
                 self.description = description
                 self.process = SimpleNamespace(pid=len(started))
                 self.heartbeat = directory / (name + '.json')
@@ -83,7 +84,9 @@ class NativeVideoTests(unittest.TestCase):
             front, rear = Path(directory) / 'front', Path(directory) / 'rear'
             front.touch()
             rear.touch()
-            settings = {'cameras': {'front': {'device': str(front)}, 'rear': {'device': str(rear)}}}
+            settings = {'cameras': {'front': {'device': str(front), 'capture_size': '800x600',
+                                              'stream_size': '800x600'},
+                                     'rear': {'device': str(rear)}}}
             with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
                  patch.object(video, 'CameraControls', return_value=MagicMock(snapshot=lambda: {})), \
                  patch.object(video, 'Child', FakeChild), \
@@ -94,6 +97,11 @@ class NativeVideoTests(unittest.TestCase):
         self.assertEqual(started.count('front-publish'), 1)
         self.assertEqual(started.count('rear-publish'), 1)
         self.assertEqual(started.count('hdmi'), 1)
+        for name in ('front-capture', 'front-publish', 'hdmi'):
+            self.assertIn('image/jpeg,width=800,height=600,', pipelines[name])
+        for name in ('rear-capture', 'rear-publish'):
+            self.assertIn('image/jpeg,width=1280,height=720,', pipelines[name])
+        self.assertIn('add-borders=true', pipelines['hdmi'])
 
 
 if __name__ == '__main__':

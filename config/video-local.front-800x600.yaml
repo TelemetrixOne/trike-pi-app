@@ -1,0 +1,6 @@
+# Verified front-camera native MJPEG mode; rear settings are not overridden.
+front:
+  capture_size: 800x600
+  stream_size: 800x600
+  output_framerate: 30
+  bitrate: 2500k

@@ -14,8 +14,8 @@ from .config import load_config
 
 LOG = logging.getLogger(__name__)
 LOCAL_PATH = '/etc/hpr/video-local.yaml'
-FIELDS = {'stream_size', 'output_framerate', 'bitrate'}
-SIZES = {'640x360', '800x450', '960x540', '1280x720'}
+FIELDS = {'stream_size', 'capture_size', 'output_framerate', 'bitrate'}
+SIZES = {'640x360', '800x450', '800x600', '960x540', '1280x720'}
 
 
 def read_local(path: str) -> dict:
@@ -48,9 +48,9 @@ def merge_local(settings: dict, overrides: dict) -> dict:
         if role not in result.get('cameras', {}):
             raise ValueError(f'{role} is not configured centrally')
         if not isinstance(values, dict) or set(values) - FIELDS:
-            raise ValueError(f'{role}: only stream_size, output_framerate and bitrate are local')
+            raise ValueError(f'{role}: only capture_size, stream_size, output_framerate and bitrate are local')
         for key, value in values.items():
-            if key == 'stream_size' and value not in SIZES:
+            if key in {'stream_size', 'capture_size'} and value not in SIZES:
                 raise ValueError(f'{role}: unsupported landscape stream size')
             if key == 'output_framerate' and (type(value) is not int or not 1 <= value <= capture_fps):
                 raise ValueError(f'{role}: frame rate must be 1..{capture_fps}')

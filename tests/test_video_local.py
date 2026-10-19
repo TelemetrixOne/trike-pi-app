@@ -27,7 +27,8 @@ class VideoLocalTests(unittest.TestCase):
 
     def test_rejects_identity_overrides_wrong_types_sizes_rates_and_bitrates(self):
         bad = [[], {'other': {}}, {'front': []}, {'front': {'device': 'different'}},
-               {'front': {'rotation': 'none'}}, {'front': {'stream_size': '800x600'}},
+               {'front': {'rotation': 'none'}}, {'front': {'stream_size': '801x601'}},
+               {'front': {'capture_size': '801x601'}},
                {'front': {'output_framerate': True}}, {'front': {'output_framerate': 31}},
                {'front': {'bitrate': '0k'}}, {'front': {'bitrate': '100M'}},
                {'front': {'bitrate': 'shell;command'}}]
@@ -70,3 +71,9 @@ class VideoLocalTests(unittest.TestCase):
         self.assertEqual(effective['cameras']['front']['output_framerate'], 30)
         self.assertEqual(effective['cameras']['front']['bitrate'], '2500k')
         self.assertEqual(effective['cameras']['rear'], self.video['cameras']['rear'])
+        effective = local.merge_local(self.video, local.read_local(str(root / 'video-local.front-800x600.yaml')))
+        self.assertEqual(effective['cameras']['front']['capture_size'], '800x600')
+        self.assertEqual(effective['cameras']['front']['stream_size'], '800x600')
+        self.assertEqual(effective['cameras']['front']['bitrate'], '2500k')
+        self.assertEqual(effective['cameras']['rear'], self.video['cameras']['rear'])
+        self.assertEqual(effective['display'], self.video['display'])

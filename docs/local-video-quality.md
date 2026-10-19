@@ -5,19 +5,27 @@ from central race/trike configuration and USB picture controls. Current front:
 
 ```yaml
 front:
-  stream_size: 1280x720
+  capture_size: 800x600
+  stream_size: 800x600
   output_framerate: 30
   bitrate: 2500k
 ```
 
 Rear is omitted and keeps its central settings (currently 640x360, 25 fps, 700k).
-The approved profile is `config/video-local.front-1280x720.yaml`. Apply future
+The approved profile is `config/video-local.front-800x600.yaml`. The front camera
+advertises native MJPEG 800x600 at 30 fps (verified on Trike1, 2026-10-20).
+Capture and stream use the same 4:3 size: no stretching or cropping from 720p.
+Rear capture remains 1280x720. HDMI uses the front capture size and retains its
+aspect-preserving, uncropped fit; widescreen monitors may show side borders.
+The previous 1280x720 profile remains available. Apply future
 quality profiles with `scripts/apply-pi-local-video.sh PROFILE.yaml`; it merges only
 specified quality fields, preserves unmentioned roles and settings, backs up the
 current file and automatically restores it if validation fails. The earlier
 800x450/25/1500k profile remains in the repository as a historical alternative.
-Front device identity, rotation, stream path, credentials, capture geometry and
-HDMI configuration remain central; only quality fields listed above are local.
+Front device identity, rotation, stream path, credentials and HDMI configuration
+remain central; only quality fields listed above are local. Optional per-camera
+`capture_size` overrides the shared capture-size default; verify camera-native
+support before setting it. An omitted capture_size retains the shared default.
 No web configuration section or Home Assistant changes are needed.
 
 The normal video launcher reads central settings through the existing loader,
@@ -34,7 +42,7 @@ sudo systemctl restart hpr-video-compositor.service
 ```
 
 That briefly interrupts both streams. It does not restart the other Pi services.
-Supported sizes are 640x360, 800x450, 960x540 and 1280x720; integer frame rate must
+Supported sizes are 640x360, 800x450, 800x600, 960x540 and 1280x720; integer frame rate must
 not exceed capture FPS; bitrate accepts 100k..8M, such as 1500k or 1.5M. Front and
 rear sections are supported, but only front is overridden in this installation.
 Unknown keys, duplicates, malformed YAML or invalid values are rejected as a whole.
