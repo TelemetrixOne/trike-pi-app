@@ -3,4 +3,4 @@ front:
   capture_size: 1280x720
   stream_size: 800x600
   output_framerate: 30
-  bitrate: 2500k
+  bitrate: 1500k

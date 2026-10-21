@@ -8,7 +8,7 @@ front:
   capture_size: 1280x720
   stream_size: 800x600
   output_framerate: 30
-  bitrate: 2500k
+  bitrate: 1500k
 ```
 
 Rear is omitted and keeps its central settings (currently 640x360, 25 fps, 700k).
