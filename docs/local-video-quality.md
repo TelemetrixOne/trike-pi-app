@@ -6,24 +6,25 @@ from central race/trike configuration and USB picture controls. Current front:
 ```yaml
 front:
   capture_size: 1280x720
-  stream_size: 800x600
+  stream_size: 800x450
   output_framerate: 30
   bitrate: 1500k
 ```
 
 Rear is omitted and keeps its central settings (currently 640x360, 25 fps, 700k).
-The approved profile is `config/video-local.front-800x600.yaml`. The front camera
+The approved profile is `config/video-local.front-800x450.yaml`. The front camera
 advertises native MJPEG 800x600 and 1280x720 at 30 fps (verified on Trike1).
 On 2026-10-21 the shared front capture was restored to 1280x720 to preserve
-HDMI quality. Only the stream is scaled to an 800x600 square-pixel canvas,
-with borders preserving the full 16:9 image (no stretching or cropping).
+HDMI quality. The latest approved stream profile is 800x450/30 at 1500k,
+preserving the full 16:9 image without padding, stretching or cropping.
+This is a scaled streaming size, not an advertised USB camera capture mode.
 Rear capture remains 1280x720. HDMI uses the 720p front capture and retains
 its aspect-preserving, uncropped fit to the detected monitor output mode.
 The previous 1280x720 profile remains available. Apply future
 quality profiles with `scripts/apply-pi-local-video.sh PROFILE.yaml`; it merges only
 specified quality fields, preserves unmentioned roles and settings, backs up the
-current file and automatically restores it if validation fails. The earlier
-800x450/25/1500k profile remains in the repository as a historical alternative.
+current file and automatically restores it if validation fails. The 800x600
+profile remains available as a padded 4:3 alternative.
 Front device identity, rotation, stream path, credentials and HDMI configuration
 remain central; only quality fields listed above are local. Optional per-camera
 `capture_size` overrides the shared capture-size default; verify camera-native

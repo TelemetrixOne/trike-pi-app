@@ -1,5 +1,6 @@
-# Approved permanent front stream settings. Rear remains centrally configured.
+# Widescreen front streaming; preserve the 720p HDMI source and rear settings.
 front:
+  capture_size: 1280x720
   stream_size: 800x450
-  output_framerate: 25
+  output_framerate: 30
   bitrate: 1500k
