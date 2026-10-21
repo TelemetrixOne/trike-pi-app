@@ -56,6 +56,19 @@ class NativeVideoTests(unittest.TestCase):
         self.assertIn('127.0.0.1:9554/race-front', publisher)
         self.assertIn('width=640,height=360,framerate=25/1', publisher)
 
+    def test_720p_source_fits_800x600_stream_without_crop_or_stretch(self):
+        camera = {'rotation': '180', 'stream_size': '800x600',
+                  'output_framerate': 30, 'bitrate': '2500k'}
+        publisher = video.publisher_pipeline('/tmp/front.sock', '1280x720', 30, camera, 'front', 8554)
+        self.assertIn('image/jpeg,width=1280,height=720,', publisher)
+        self.assertIn('width=800,height=600,framerate=30/1', publisher)
+        self.assertIn('videoscale add-borders=true', publisher)
+        self.assertIn('format=I420,pixel-aspect-ratio=1/1', publisher)
+        self.assertNotIn('crop', publisher)
+        hdmi = video.display_pipeline('/tmp/display.sock', '1280x720', 30, camera, (33, 800, 480))
+        self.assertIn('image/jpeg,width=1280,height=720,', hdmi)
+        self.assertIn('add-borders=true', hdmi)
+
     def test_hdmi_hotplug_does_not_restart_publishers(self):
         started, handlers, loops, pipelines = [], {}, [0], {}
 

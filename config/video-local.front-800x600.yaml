@@ -1,6 +1,6 @@
-# Verified front-camera native MJPEG mode; rear settings are not overridden.
+# Preserve the 720p HDMI source; scale only the stream to an uncropped 4:3 canvas.
 front:
-  capture_size: 800x600
+  capture_size: 1280x720
   stream_size: 800x600
   output_framerate: 30
   bitrate: 2500k

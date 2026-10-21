@@ -288,8 +288,8 @@ def publisher_pipeline(socket, size, fps, camera, role, port):
     kbps = int(float(bitrate[:-1]) * 1000) if bitrate.endswith('M') else (
         int(bitrate[:-1]) if bitrate.endswith('k') else int(bitrate) // 1000)
     return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
-            '! videoconvert ! videoscale ! videorate drop-only=true ! '
-            f'video/x-raw,width={width},height={height},framerate={int(camera.get("output_framerate", 25))}/1,format=I420 ! '
+            '! videoconvert ! videoscale add-borders=true ! videorate drop-only=true ! '
+            f'video/x-raw,width={width},height={height},framerate={int(camera.get("output_framerate", 25))}/1,format=I420,pixel-aspect-ratio=1/1 ! '
             'x264enc speed-preset=ultrafast tune=zerolatency '
             f'bitrate={kbps} key-int-max={int(camera.get("gop", 25))} bframes=0 ! '
             'h264parse config-interval=1 ! identity name=progress silent=true ! '
