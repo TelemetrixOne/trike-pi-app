@@ -454,6 +454,9 @@ configure_video() {
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose.sh" "${video_root}/hpr-video-compose.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-compose-gst.sh" "${video_root}/hpr-video-compose-gst.sh"
   install -m 0755 "${INSTALL_ROOT}/bin/hpr-video-native.py" "${video_root}/hpr-video-native.py"
+  if ! gst-inspect-1.0 clockoverlay >/dev/null 2>&1; then
+    apt-get install -y --no-upgrade --no-install-recommends gstreamer1.0-x
+  fi
   # Native viewer uses system Python, not the gateway virtual environment.
   if ! /usr/bin/python3 -c 'import yaml' >/dev/null 2>&1; then
     apt-get install -y --no-upgrade python3-yaml

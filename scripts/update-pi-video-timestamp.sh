@@ -30,6 +30,12 @@ for NAME in hpr-video-native.py hpr-video-compose-gst.sh hpr-video-compose.sh hp
 done
 cp -a /etc/hpr/hpr.yaml /etc/hpr/video-local.yaml /etc/hpr/camera-controls.yaml "$BACKUP/"
 systemctl cat hpr-video-compositor.service > "$BACKUP/unit.txt"
+# The Pi image can have core GStreamer without the pango/clockoverlay plugin.
+# This adds one scoped package, never upgrades the system or installs recommends.
+if ! gst-inspect-1.0 clockoverlay >/dev/null 2>&1; then
+  apt-get install -y --no-upgrade --no-install-recommends gstreamer1.0-x
+fi
+gst-inspect-1.0 clockoverlay >/dev/null
 restore() {
   trap - ERR
   for NAME in hpr-video-native.py hpr-video-compose-gst.sh hpr-video-compose.sh hpr-video-publish.sh; do

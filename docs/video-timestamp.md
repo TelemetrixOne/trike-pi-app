@@ -37,7 +37,7 @@ behaviour still require live validation; do not claim that a past NTP sync
 proves future accuracy. Legacy FFmpeg has no dynamic NTP visibility gate and
 must remain unenabled until its startup sync policy is separately validated.
 
-## Acceptance workflow (Pi currently unreachable)
+## Acceptance workflow
 
 First compare GitHub main, live systemd units/processes and all affected files.
 The guarded updater supports the last known native deployment only; it refuses
@@ -51,6 +51,9 @@ This backs up source/config/units, installs the helper and launcher changes with
 an explicit OFF drop-in, restarts ONLY `hpr-video-compositor`, and validates both
 advancing streams and untouched configuration. Installing disabled source still
 briefly interrupts both streams; coordinate this outside riding.
+If the clockoverlay plugin is missing, the updater installs only `gstreamer1.0-x`
+with no upgrades or recommends. This dependency is also included in the normal
+installer so a fresh Pi has the same plugin.
 
 Confirm `gst-inspect-1.0 clockoverlay`, `ffmpeg -filters`/drawtext and the DejaVu
 font. Do not install packages during a race. Run at least 60 seconds OFF baseline,
