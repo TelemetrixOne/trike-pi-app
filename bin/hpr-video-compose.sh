@@ -9,6 +9,9 @@ if [[ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ]]; then
   exec "${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
 fi
 cfg() { PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" -m hpr_gateway.config_value --config "${CONFIG_PATH}" "$@"; }
+TIMESTAMP_ENV="$(PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" \
+  -m hpr_gateway.video_timestamp --config "$CONFIG_PATH")"
+eval "$TIMESTAMP_ENV"
 cam() { cfg "video.cameras.${1}.${2}" --default "${3}"; }
 rotation_filter() {
   case "$1" in none) printf '';; clockwise_90) printf 'transpose=clock,';;
@@ -134,20 +137,20 @@ if hdmi_connected; then
   FRAMEBUFFER_PAD=""; [[ "$VS" == "$DS" ]] || FRAMEBUFFER_PAD=",pad=${DW}:${DH}:0:0"
   if [[ -n "$MAIN_INDEX" && -n "$PIP_INDEX" ]]; then
     F="[${MAIN_INDEX}:v]split=2[mn0][md0];"
-    F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
-    F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+    F+="[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[mn];"
+    F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[pn];"
     F+="[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   elif [[ -n "$MAIN_INDEX" ]]; then
-    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
+    F="[${MAIN_INDEX}:v]split=2[mn0][md0];[mn0]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[mn];[md0]${MR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   else
-    F="[${PIP_INDEX}:v]split=2[pn0][pd0];[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];[pd0]${PR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
+    F="[${PIP_INDEX}:v]split=2[pn0][pd0];[pn0]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[pn];[pd0]${PR}${HDMI_FIT}${FRAMEBUFFER_PAD}[display]"
   fi
   DISPLAY_OUTPUT=(-map '[display]' -c:v rawvideo -pix_fmt "$PIXEL_FORMAT" -f fbdev "$DISPLAY_DEVICE")
   echo "HDMI-priority mode: ${CAPTURE_SIZE}@${CAPTURE_FPS} -> monitor ${VS} uncropped, framebuffer ${DS}; input queues ${INPUT_QUEUE_SIZE}." >&2
 else
   F=''
-  [[ -z "$MAIN_INDEX" ]] || F+="[${MAIN_INDEX}:v]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1[mn];"
-  [[ -z "$PIP_INDEX" ]] || F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1[pn];"
+  [[ -z "$MAIN_INDEX" ]] || F+="[${MAIN_INDEX}:v]${MR}fps=${MF},scale=${MSW}:${MSH}:force_original_aspect_ratio=increase,crop=${MSW}:${MSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[mn];"
+  [[ -z "$PIP_INDEX" ]] || F+="[${PIP_INDEX}:v]${PR}fps=${PF},scale=${PSW}:${PSH}:force_original_aspect_ratio=increase,crop=${PSW}:${PSH},setsar=1${HPR_VIDEO_FF_TIMESTAMP}[pn];"
   F="${F%;}"
   echo "Streaming-priority mode: HDMI is disconnected or ${DISPLAY_DEVICE} is unavailable." >&2
 fi

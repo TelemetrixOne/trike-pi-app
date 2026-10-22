@@ -5,6 +5,9 @@ CAMERA_NAME="${1:?camera name is required}"
 CONFIG_PATH="${HPR_CONFIG_PATH:-/etc/hpr/hpr.yaml}"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 PYTHON="${INSTALL_ROOT}/venv/bin/python"
+TIMESTAMP_ENV="$(PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" \
+  -m hpr_gateway.video_timestamp --config "$CONFIG_PATH")"
+eval "$TIMESTAMP_ENV"
 
 cfg() {
   PYTHONPATH="${INSTALL_ROOT}" "${PYTHON}" -m hpr_gateway.config_value \
@@ -91,7 +94,7 @@ if [ "${DISPLAY_ENABLED}" = "true" ] && [ "${CAMERA_NAME}" = "${DISPLAY_CAMERA}"
       -hide_banner -nostdin -fflags nobuffer -flags low_delay \
       -f v4l2 -input_format "${INPUT_FORMAT}" -video_size "${SIZE}" \
       -framerate "${INPUT_FPS}" -i "${DEVICE}" -an \
-      -map 0:v -vf "${ROTATION_FILTER}fps=${OUTPUT_FPS},scale=${STREAM_SIZE},setsar=1" \
+      -map 0:v -vf "${ROTATION_FILTER}fps=${OUTPUT_FPS},scale=${STREAM_SIZE},setsar=1${HPR_VIDEO_FF_TIMESTAMP}" \
       -c:v libx264 -preset ultrafast -tune zerolatency \
       -pix_fmt yuv420p -b:v "${BITRATE}" -maxrate "${BITRATE}" -bufsize 140k \
       -g "${GOP}" -keyint_min "${GOP}" -sc_threshold 0 \
@@ -105,7 +108,7 @@ exec /usr/bin/ffmpeg \
   -hide_banner -nostdin \
   -f v4l2 -input_format "${INPUT_FORMAT}" -video_size "${SIZE}" \
   -framerate "${INPUT_FPS}" -i "${DEVICE}" -an \
-  -vf "${ROTATION_FILTER}fps=${OUTPUT_FPS},scale=${STREAM_SIZE},setsar=1" -c:v libx264 -preset ultrafast -tune zerolatency \
+  -vf "${ROTATION_FILTER}fps=${OUTPUT_FPS},scale=${STREAM_SIZE},setsar=1${HPR_VIDEO_FF_TIMESTAMP}" -c:v libx264 -preset ultrafast -tune zerolatency \
   -pix_fmt yuv420p -b:v "${BITRATE}" -maxrate "${BITRATE}" -bufsize 140k \
   -g "${GOP}" -keyint_min "${GOP}" -sc_threshold 0 \
   -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/${PATH_NAME}"

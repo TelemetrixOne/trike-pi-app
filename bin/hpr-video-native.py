@@ -290,6 +290,7 @@ def publisher_pipeline(socket, size, fps, camera, role, port):
     return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
             '! videoconvert ! videoscale add-borders=true ! videorate drop-only=true ! '
             f'video/x-raw,width={width},height={height},framerate={int(camera.get("output_framerate", 25))}/1,format=I420,pixel-aspect-ratio=1/1 ! '
+            f'{os.environ.get("HPR_VIDEO_GST_TIMESTAMP", "")}'
             'x264enc speed-preset=ultrafast tune=zerolatency '
             f'bitrate={kbps} key-int-max={int(camera.get("gop", 25))} bframes=0 ! '
             'h264parse config-interval=1 ! identity name=progress silent=true ! '
@@ -356,6 +357,15 @@ def stalled(started, progress, now):
     return now - started > STARTUP_GRACE
 
 
+def clock_synchronised():
+    try:
+        return subprocess.check_output(
+            ['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'],
+            text=True, timeout=1, stderr=subprocess.DEVNULL).strip() == 'yes'
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def worker(description, heartbeat, kind):
     import gi
     gi.require_version('Gst', '1.0')
@@ -365,6 +375,17 @@ def worker(description, heartbeat, kind):
         os.nice(5)
     pipeline = Gst.parse_launch(description)
     element = pipeline.get_by_name('progress')
+    stamp = pipeline.get_by_name('burned_timestamp')
+    stamp_visible = [False]
+    def update_clock():
+        stamp_visible[0] = clock_synchronised()
+        stamp.set_property('silent', not stamp_visible[0])
+        return True
+    if stamp is not None:
+        # Never block camera delivery waiting for NTP. Hide untrusted wall time
+        # until synchronised, then reveal it in place without restarting video.
+        update_clock()
+        GLib.timeout_add_seconds(15, update_clock)
     frames, previous = [0], [0]
     # Completed sink renders detect a blocked KMS sink; a probe before it
     # would incorrectly report queued frames as displayed.
@@ -378,7 +399,8 @@ def worker(description, heartbeat, kind):
     def progress():
         count = frames[0] if kind != 'display' else element.get_property('stats').get_value('rendered')
         if count != previous[0]:
-            write_json(heartbeat, {'at': time.monotonic(), 'frames': count})
+            write_json(heartbeat, {'at': time.monotonic(), 'frames': count,
+                                   'timestamp_visible': stamp_visible[0]})
             previous[0] = count
         return True
 
@@ -503,6 +525,8 @@ def supervise(settings):
                     stop('hdmi')
                 write_json(root / 'video-status.json', {
                     'at': time.monotonic(), 'display_mode': mode, 'pip': False,
+                    'timestamp_requested': os.environ.get('HPR_VIDEO_TIMESTAMP_ENABLED') == '1',
+                    'timestamp_timezone': os.environ.get('TZ'),
                     'camera_controls': controls.snapshot(),
                     'children': {name: {'pid': child.process.pid, 'restarts': restarts.get(name, 0),
                                        **read_progress(child.heartbeat)} for name, child in children.items()}})
