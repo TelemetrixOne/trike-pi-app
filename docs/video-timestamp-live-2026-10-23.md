@@ -73,12 +73,41 @@ measurements for front and rear; CPU/fps/clock/network conditions passed its
 configured limits. No latency values were guessed or entered as zero.
 
 The five-minute trial automatically returned OFF and both streams passed the
-normal validation afterward. CURRENT PERMANENT STATE: timestamp code installed,
-overlay OFF, awaiting measured source-to-player latency and operator visual
-acceptance. Do not describe timestamps as permanently enabled.
+normal validation afterward. At the end of that initial trial the overlay was
+OFF, awaiting latency/visual acceptance. See the subsequent enablement below.
 
 Remaining: real latency tests for both streams; physical HDMI motion/rotation/
 latency; real boot/re-sync behaviour when approved; TM1 live views, recording
 library and downloaded-clip acceptance; legacy FFmpeg/HDMI/PiP integration if
 those rollback paths are used. No central-platform or Home Assistant changes
 were made.
+
+## Subsequent permanent enablement — 14:48 AEDT
+
+After the outstanding unmeasured latency was reported, Shane again instructed
+the Pi chat to proceed with implementation. A dedicated explicit acceptance
+option was committed/pushed before use. It permits missing latency measurements
+only with operator acceptance, leaves them null, reports the limitation, and
+still rejects measured latency regressions or failures of the other gates.
+
+The affected live video files again matched main before the operation. The
+repository mode script backed up the previous OFF switch, saved the permanent
+`Environment=HPR_VIDEO_TIMESTAMP_ENABLED=1` drop-in under `/etc/systemd/system`,
+and deliberately restarted only `hpr-video-compositor.service`. Existing GPS
+watchdog activity again independently restarted GPS/gpsd during the observation.
+The central config/camera controls hashes remained unchanged. Both normal video
+validation and native timestamp-visible status passed. No throttling/failing
+systemd units were observed at the successful post-enable check. NTP remained
+synchronised (reported offset approximately -3.3 ms).
+
+Frames fetched from BOTH central RTSP paths at 14:49 displayed the correct
+bottom-left clocks (`14:49:20 23-10-2026` front, `14:49:22 23-10-2026` rear).
+All 147 automated tests passed. The permanent ON switch was confirmed on the Pi
+before a later follow-up SSH check timed out twice. Cause of that subsequent
+reachability loss is unknown; no reboot or remedial restart was attempted.
+
+LAST VERIFIED PERMANENT STATE: timestamps ON in both streams, persistent across
+service starts/reboots; native visibility still depends on clock synchronisation.
+Current live reachability/continuity after the later SSH timeouts is unverified.
+End-to-end latency is still UNMEASURED, not a passed or zero-overhead result.
+Physical HDMI, real boot/re-sync and TM1 library/download acceptance remain pending.
