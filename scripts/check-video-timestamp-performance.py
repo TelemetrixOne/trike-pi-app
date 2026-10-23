@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-def compare(baseline, trial):
+def compare(baseline, trial, accept_unmeasured_latency=False):
     errors = []
     for label, report in (('baseline', baseline), ('trial', trial)):
         if report['duration_seconds'] < 60:
@@ -26,8 +26,11 @@ def compare(baseline, trial):
             errors.append(role + ': frame rate reduced by more than 2%')
         a = baseline['measured_end_to_end_latency_ms'][role]
         b = trial['measured_end_to_end_latency_ms'][role]
-        if a is None or b is None or min(a, b) < 0:
-            errors.append(role + ': real end-to-end latency measurements required')
+        if any(value is not None and value < 0 for value in (a, b)):
+            errors.append(role + ': invalid negative latency measurement')
+        elif a is None or b is None:
+            if not accept_unmeasured_latency:
+                errors.append(role + ': real end-to-end latency measurements required')
         elif b - a > 40:
             errors.append(role + ': latency increased by more than 40 ms')
         # The only permitted pipeline change is inserting the overlay filter.
@@ -45,8 +48,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('baseline')
     parser.add_argument('trial')
+    parser.add_argument('--accept-unmeasured-latency', action='store_true',
+                        help='Explicit operator acceptance of missing latency evidence; never fabricates measurements')
     args = parser.parse_args()
-    errors, delta = compare(json.loads(Path(args.baseline).read_text()), json.loads(Path(args.trial).read_text()))
+    errors, delta = compare(json.loads(Path(args.baseline).read_text()), json.loads(Path(args.trial).read_text()),
+                            args.accept_unmeasured_latency)
     print(f'CPU mean delta: {delta:+.2f} percentage points')
+    if args.accept_unmeasured_latency:
+        print('OPERATOR ACCEPTANCE: end-to-end latency remains UNMEASURED; no zero-overhead or latency guarantee')
     print('\n'.join(errors) if errors else 'PASS performance gate (not proof of zero overhead)')
     raise SystemExit(bool(errors))

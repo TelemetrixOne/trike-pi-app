@@ -29,7 +29,19 @@ case "$MODE" in
     [[ "$(fc-match -f '%{family}' 'DejaVu Sans')" == *'DejaVu Sans'* ]] || { echo 'Missing expected font' >&2; exit 1; }
     if [[ "$MODE" == enable ]]; then
       [[ -z "$(systemctl list-units --type=timer --state=active --no-legend 'hpr-video-timestamp-revert-*.timer')" ]] || { echo 'Wait for the trial rollback timer to finish before permanent enablement' >&2; exit 1; }
-      PYTHONPATH="$ROOT" "$ROOT/venv/bin/python" "$REPO_ROOT/scripts/check-video-timestamp-performance.py" "${2:?baseline JSON}" "${3:?trial JSON}"
+      REVIEW=()
+      if [[ "${4:-}" == --accept-unmeasured-latency ]]; then
+        REVIEW=(--accept-unmeasured-latency)
+      elif [[ "$#" -gt 3 ]]; then
+        echo 'Unknown acceptance option' >&2; exit 1
+      fi
+      PYTHONPATH="$ROOT" "$ROOT/venv/bin/python" "$REPO_ROOT/scripts/check-video-timestamp-performance.py" "${2:?baseline JSON}" "${3:?trial JSON}" "${REVIEW[@]}"
+      BACKUP="/opt/hpr/backups/video-timestamp-enable-$(date -u +%Y%m%dT%H%M%SZ)"
+      install -d -m 0700 "$BACKUP"
+      cp -a "$PERMANENT" "$BACKUP/80-video-timestamp.conf"
+      if [[ "${#REVIEW[@]}" != 0 ]]; then
+        logger -t hpr-video-timestamp 'Operator approved permanent enablement with end-to-end latency still unmeasured'
+      fi
       printf '[Service]\nEnvironment=HPR_VIDEO_TIMESTAMP_ENABLED=1\n' > "$PERMANENT"
       [[ ! -e "$TRIAL" ]] || rm -- "$TRIAL"
     else

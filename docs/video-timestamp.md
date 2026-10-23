@@ -104,6 +104,14 @@ After all checks (including boot clock handling) pass, retain evidence and run:
 sudo bash scripts/video-timestamp-mode.sh enable baseline.json trial.json
 ```
 
+If the operator explicitly requests enablement after being told latency remains
+unmeasured, `enable baseline.json trial.json --accept-unmeasured-latency` records
+that acceptance and leaves the measurements null. All other gates still apply,
+including rejecting an actual measured latency regression. It does not constitute
+a latency pass or a zero-overhead guarantee. The prior permanent switch is backed
+up before changing it. This exception was added following Shane's renewed
+instruction to proceed on 23 October, after the missing measurement was reported.
+
 Legacy FFmpeg filter parsing is smoke-tested locally; legacy HDMI/PiP branches
 still require separate integration/latency tests if used. The benchmark tool is
 for the currently deployed native workers and must not be presented as validating

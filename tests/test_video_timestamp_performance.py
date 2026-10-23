@@ -50,3 +50,17 @@ class TimestampPerformanceTests(unittest.TestCase):
         baseline['publisher_commands']['front'] += ' /run/hpr-video/hpr-video-aaa/front.sock'
         trial['publisher_commands']['front'] += ' /run/hpr-video/hpr-video-bbb/front.sock'
         self.assertEqual(gate.compare(baseline, trial)[0], [])
+
+    def test_explicit_acceptance_only_allows_missing_latency(self):
+        baseline, trial = self.reports()
+        baseline['measured_end_to_end_latency_ms'] = {'front': None, 'rear': None}
+        trial['measured_end_to_end_latency_ms'] = {'front': None, 'rear': None}
+        self.assertTrue(gate.compare(baseline, trial)[0])
+        self.assertEqual(gate.compare(baseline, trial, accept_unmeasured_latency=True)[0], [])
+        trial['cpu_mean_percent'] = 40
+        self.assertTrue(gate.compare(baseline, trial, accept_unmeasured_latency=True)[0])
+        baseline, trial = self.reports()
+        trial['measured_end_to_end_latency_ms']['front'] = 200
+        self.assertTrue(gate.compare(baseline, trial, accept_unmeasured_latency=True)[0])
+        trial['measured_end_to_end_latency_ms']['front'] = -1
+        self.assertTrue(gate.compare(baseline, trial, accept_unmeasured_latency=True)[0])
