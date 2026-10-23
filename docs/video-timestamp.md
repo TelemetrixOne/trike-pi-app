@@ -39,6 +39,9 @@ must remain unenabled until its startup sync policy is separately validated.
 
 ## Acceptance workflow
 
+For the deployed, default-OFF trial results and outstanding acceptance checks,
+see [23 October live report](video-timestamp-live-2026-10-23.md).
+
 First compare GitHub main, live systemd units/processes and all affected files.
 The guarded updater supports the last known native deployment only; it refuses
 unidentified source. Stage a committed LF Git archive, then from that stage:
@@ -105,4 +108,5 @@ Legacy FFmpeg filter parsing is smoke-tested locally; legacy HDMI/PiP branches
 still require separate integration/latency tests if used. The benchmark tool is
 for the currently deployed native workers and must not be presented as validating
 legacy paths. No hardware/performance/latency or central recording acceptance has
-yet been performed, and no Pi deployment has occurred for this change.
+yet been completed for permanent enablement. The disabled-source deployment and
+limited native trial are documented in the dated live report linked above.
