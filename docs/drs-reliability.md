@@ -78,3 +78,17 @@ at/after 18:35 AEDT. The earlier read-only audit matched the relevant live sourc
 to GitHub main, but the deployment preflight found SSH unreachable and Tailscale
 reporting the Pi offline. Source can be published while offline; live alignment,
 deployment and passive validation remain pending a fresh online comparison.
+
+The Pi returned online later that evening. A fresh comparison confirmed the
+expected old GPIO-owner source and unchanged profile/sync sources, DRS settings,
+unit and process command. NTP was synchronised. Commit `7c322e6` was deployed at
+20:00:31 AEDT using the guarded updater. Backup:
+`/opt/hpr/backups/drs-reliability-20261023T090031Z`.
+Only `hpr-gpio-control.service` was restarted (once, PID 4514, no automatic
+restarts observed). Both installed sources matched committed bytes exactly;
+`/etc/hpr/hpr.yaml` remained byte-identical. The passive validator passed twice,
+with increasing schema1 heartbeats and stable service identity. Status was
+RIDER_CONTROL / LOCAL / target OPEN / phase released, clock_ready true and
+position_verified false. The stale retained legacy command was ignored.
+No live test commands were sent. Physical switch, remote command/retry and
+loaded-mechanism tests remain pending observation; central UI rollout is separate.
