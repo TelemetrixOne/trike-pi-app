@@ -30,6 +30,7 @@ import paho.mqtt.client as mqtt
 from gpiozero import InputDevice, OutputDevice, PWMOutputDevice
 
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
+from hpr_gateway.drs_protocol import DRSClock, DRSProtocol
 
 MQTT: dict = {}
 SERVICE: dict = {}
@@ -259,6 +260,8 @@ class DRSRuntime:
     transition_start_pulse_us: Optional[float] = None
     transition_target_pulse_us: Optional[float] = None
     transition_started_monotonic: Optional[float] = None
+    last_actuation_monotonic: Optional[float] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -681,47 +684,79 @@ class GPIOControlService:
     def _configure_drs(self) -> None:
         if not DRS.get("enabled", False):
             return
+        self._drs_protocol = DRSProtocol()
+        self._drs_clock = DRSClock()
         self._drs = DRSRuntime(int(DRS["pin"]), int(DRS["frequency_hz"]), int(DRS["close_pulse_us"]),
                                int(DRS["open_pulse_us"]))
         self._set_drs_mode(DRS["boot_mode"], publish=False)
 
-    def _set_drs_mode(self, mode: str, publish: bool = True) -> None:
+    def _set_drs_mode(self, mode: str, publish: bool = True, retry: bool = False) -> bool:
         if self._drs is None:
             return
         with self._drs_lock:
             self._drs.mode = mode
             if mode == "RIDER_CONTROL":
-                self._apply_drs_rider_switch(publish=publish)
+                result = (self._apply_drs_rider_switch(publish=publish, retry=True) if retry
+                          else self._apply_drs_rider_switch(publish=publish))
             else:
                 self._drs.source = SOURCE_REMOTE
-                self._set_drs("OPEN" if mode == "OPEN" else "CLOSE", publish=publish)
+                result = (self._set_drs("OPEN" if mode == "OPEN" else "CLOSE", publish=publish, force=True)
+                          if retry else self._set_drs("OPEN" if mode == "OPEN" else "CLOSE", publish=publish))
+            if result is False:
+                return False
             if publish:
                 self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/mode", mode)
+                self._publish_drs_status()
+            return True
 
-    def _apply_drs_rider_switch(self, publish: bool = True) -> None:
+    def _apply_drs_rider_switch(self, publish: bool = True, retry: bool = False) -> bool:
         if self._drs is None:
             return
         input_runtime = self._sense_inputs.get(self._key(DRS["trike"], DRS["rider_control_input"]))
         switch_on = input_runtime is not None and self._sense_input_state(input_runtime) == STATE_ON
         self._drs.source = SOURCE_LOCAL
-        self._set_drs("OPEN" if switch_on else "CLOSE", publish=publish)
+        return (self._set_drs("OPEN" if switch_on else "CLOSE", publish=publish, force=True)
+                if retry else self._set_drs("OPEN" if switch_on else "CLOSE", publish=publish))
 
-    def _set_drs(self, state: str, publish: bool = True) -> None:
+    def _set_drs(self, state: str, publish: bool = True, force: bool = False) -> bool:
+        try:
+            self._drive_drs(state, publish=publish, force=force)
+            return True
+        except Exception as exc:
+            self._drs_failed(exc)
+            return False
+
+    def _drs_failed(self, exc) -> None:
+        self._drs.error = type(exc).__name__ + ': ' + str(exc)[:160]
+        self._drs.transition_target_pulse_us = None
+        self._drs.pulse_release_at_monotonic = None
+        if self._drs.output is not None:
+            try:
+                self._drs.output.close()
+            except Exception:
+                pass
+        self._drs.output = None
+        LOG.error('DRS actuator error (position unverified): %s', self._drs.error)
+        self._publish_drs_status(force=True)
+
+    def _drive_drs(self, state: str, publish: bool = True, force: bool = False) -> None:
         with self._drs_lock:
             if self._drs is None:
                 return
             target_pulse = self._drs.open_pulse_us if state == "OPEN" else self._drs.close_pulse_us
-            duplicate = self._drs.state == state and (
+            duplicate = not force and not self._drs.error and self._drs.state == state and (
                 self._drs.current_pulse_us == target_pulse or
                 self._drs.transition_target_pulse_us == target_pulse
             )
             if not duplicate:
+                self._drs.error = None
+                self._drs.last_actuation_monotonic = time.monotonic()
                 if self._drs.output is None:
                     self._drs.output = PWMOutputDevice(self._drs.pin, frequency=self._drs.frequency_hz, initial_value=0)
                 start_pulse = self._drs.current_pulse_us
                 transition_seconds = float(DRS.get("transition_seconds", 0))
                 self._drs.pulse_release_at_monotonic = None
-                if start_pulse is None or transition_seconds <= 0:
+                if start_pulse is None or start_pulse == target_pulse or transition_seconds <= 0:
                     self._drs.output.value = self._servo_duty(target_pulse, self._drs.frequency_hz)
                     self._drs.current_pulse_us = target_pulse
                     self._drs.transition_target_pulse_us = None
@@ -734,6 +769,77 @@ class GPIOControlService:
         if publish:
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", state)
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
+            self._publish_drs_status()
+
+    def _drs_phase(self) -> str:
+        if self._drs.error:
+            return 'error'
+        if self._drs.transition_target_pulse_us is not None:
+            return 'moving'
+        if self._drs.pulse_release_at_monotonic is not None:
+            return 'holding'
+        return 'released' if self._drs.output is None and self._drs.current_pulse_us is not None else 'idle'
+
+    def _drs_event(self) -> dict:
+        event = self._drs_protocol.event(self._drs.mode, self._drs.state, self._drs_phase())
+        event['source'] = self._drs.source
+        event['clock_ready'] = bool(getattr(self, '_drs_clock', None) and self._drs_clock.ready)
+        if self._drs.error:
+            event['error'] = self._drs.error
+        return event
+
+    def _publish_drs_status(self, force=False) -> None:
+        protocol = getattr(self, '_drs_protocol', None)
+        if self._drs is None or protocol is None:
+            return
+        key = (self._drs.mode, self._drs.state, self._drs.source, self._drs_phase(),
+               self._drs.error, protocol.last_command_id,
+               bool(getattr(self, '_drs_clock', None) and self._drs_clock.ready))
+        now = time.monotonic()
+        if not force and key == protocol.last_status and now < protocol.next_status_at:
+            return
+        self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/status",
+                      json.dumps(self._drs_event(), separators=(',', ':')), retain=True, qos=1)
+        protocol.last_status, protocol.next_status_at = key, now + 5
+
+    def _drs_ack(self, result) -> None:
+        event = self._drs_event()
+        event.update(result)
+        self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/ack",
+                      json.dumps(event, separators=(',', ':')), retain=False, qos=1)
+        LOG.info('DRS command id=%s result=%s reason=%s mode=%s target=%s phase=%s',
+                 event.get('command_id'), event['result'], event.get('reason', ''),
+                 event['mode'], event['target'], event['phase'])
+
+    def _handle_drs_command(self, msg) -> None:
+        protocol = self._drs_protocol
+        command, rejection = protocol.parse(msg.payload, msg.retain, self._drs_clock.ready)
+        if rejection:
+            self._drs_ack(rejection)
+            return
+        mode, ident = command['mode'], command['command_id']
+        if mode == 'RIDER_CONTROL':
+            sensor = self._sense_inputs.get(self._key(DRS['trike'], DRS['rider_control_input']))
+            target = 'OPEN' if sensor is not None and self._sense_input_state(sensor) == STATE_ON else 'CLOSE'
+        else:
+            target = 'OPEN' if mode == 'OPEN' else 'CLOSE'
+        retry = target == self._drs.state and self._drs.output is None
+        if target == self._drs.state and self._drs_phase() in ('moving', 'holding'):
+            result = {'result': 'busy', 'reason': 'actuation_in_progress', 'command_id': ident}
+        elif retry and self._drs.last_actuation_monotonic is not None and time.monotonic() - self._drs.last_actuation_monotonic < 1:
+            result = {'result': 'busy', 'reason': 'retry_cooldown', 'command_id': ident}
+        else:
+            previous = protocol.last_command_id
+            protocol.last_command_id = ident
+            success = self._set_drs_mode(mode, retry=retry)
+            if not success:
+                protocol.last_command_id = previous
+            result = {'result': 'accepted' if success else 'rejected', 'command_id': ident}
+            if not success:
+                result['reason'] = 'actuator_error'
+        protocol.remember(ident, result['result'])
+        self._drs_ack(result)
+        self._publish_drs_status(force=True)
 
     def _schedule_drs_release(self) -> None:
         if DRS.get("switch_behavior") == "pulse_release":
@@ -755,15 +861,19 @@ class GPIOControlService:
 
     def _release_drs_if_due(self) -> None:
         with self._drs_lock:
-            self._advance_drs()
-            if self._drs is None or self._drs.output is None or self._drs.pulse_release_at_monotonic is None:
+            if self._drs is None:
                 return
-            if time.monotonic() < self._drs.pulse_release_at_monotonic:
-                return
-            self._drs.output.close()
-            self._drs.output = None
-            self._drs.pulse_release_at_monotonic = None
-            LOG.info("DRS PWM released after movement to %s", self._drs.state)
+            try:
+                self._advance_drs()
+                if (self._drs.output is not None and self._drs.pulse_release_at_monotonic is not None
+                        and time.monotonic() >= self._drs.pulse_release_at_monotonic):
+                    self._drs.output.close()
+                    self._drs.output = None
+                    self._drs.pulse_release_at_monotonic = None
+                    LOG.info("DRS PWM released after movement to %s (position unverified)", self._drs.state)
+            except Exception as exc:
+                self._drs_failed(exc)
+            self._publish_drs_status()
 
     @staticmethod
     def _is_horn(runtime: CircuitRuntime) -> bool:
@@ -908,12 +1018,12 @@ class GPIOControlService:
     def _sanitize_payload(payload: bytes) -> str:
         return payload.decode("utf-8", errors="ignore").strip().upper()
 
-    def _publish(self, topic: str, payload: str, retain: Optional[bool] = None) -> None:
+    def _publish(self, topic: str, payload: str, retain: Optional[bool] = None, qos=None) -> None:
         if not self._mqtt_connected:
             return
         if retain is None:
             retain = MQTT["retain_state"]
-        self._client.publish(topic, payload, qos=MQTT["qos"], retain=retain)
+        self._client.publish(topic, payload, qos=MQTT["qos"] if qos is None else qos, retain=retain)
         LOG.debug("Published %s => %s", topic, payload)
 
     @staticmethod
@@ -1106,6 +1216,7 @@ class GPIOControlService:
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/state", self._drs.state)
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/mode", self._drs.mode)
             self._publish(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/source", self._drs.source)
+            self._publish_drs_status(force=True)
 
     def _gpio_evidence(self) -> dict:
         """Read GPIO without changing outputs. This does not prove external loads moved."""
@@ -1289,6 +1400,7 @@ class GPIOControlService:
             client.subscribe(f"{base}/set", qos=MQTT["qos"])
         if self._drs is not None:
             client.subscribe(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/set", qos=MQTT["qos"])
+            client.subscribe(f"{MQTT['topic_root']}/{DRS['trike']}/control/drs/command", qos=1)
         self._queue_event("connected")
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
@@ -1299,6 +1411,10 @@ class GPIOControlService:
         self._queue_event("command", msg)
 
     def _handle_message(self, msg) -> None:
+        if (getattr(self, '_drs', None) is not None and
+                msg.topic == f"{MQTT.get('topic_root', 'hpr')}/{DRS['trike']}/control/drs/command"):
+            self._handle_drs_command(msg)
+            return
         if msg.retain:
             LOG.info("Ignoring retained actuator command on %s", msg.topic)
             return
@@ -1309,6 +1425,10 @@ class GPIOControlService:
             if state not in ("OPEN", "CLOSED", "RIDER_CONTROL"):
                 LOG.warning("Ignoring invalid DRS payload on %s: %r", msg.topic, payload)
                 return
+            protocol = getattr(self, '_drs_protocol', None)
+            if protocol is not None:
+                protocol.last_command_id = None
+            LOG.info('DRS legacy command mode=%s (uncorrelated, position unverified)', state)
             self._set_drs_mode(state)
             return
         for runtime in self._circuits.values():
@@ -1342,6 +1462,8 @@ class GPIOControlService:
         LOG.debug("No circuit matched MQTT topic %s", msg.topic)
 
     def start(self) -> int:
+        if getattr(self, '_drs_clock', None) is not None:
+            self._drs_clock.start()
         self._client.connect_async(MQTT["host"], MQTT["port"], keepalive=60)
         self._client.loop_start()
         self._publish_all_states()
@@ -1367,6 +1489,8 @@ class GPIOControlService:
                             self._apply_logic(runtime, publish=False)
                 time.sleep(float(SERVICE["poll_interval_seconds"]))
         finally:
+            if getattr(self, '_drs_clock', None) is not None:
+                self._drs_clock.stop()
             self._telemetry.stop()
             self._mqtt_connected = False
             self._client.loop_stop()
