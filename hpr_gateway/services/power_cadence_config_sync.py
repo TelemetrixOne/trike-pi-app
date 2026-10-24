@@ -13,6 +13,7 @@ import yaml
 
 from ..config import HprConfig, config_arg_parser, load_config
 from ..mqtt import make_client
+from ..config_transaction import migrated, serialized_config
 from ..power_cadence_profile import profile_hash, validate_profile
 from .gpio_config_sync import atomic_write
 
@@ -36,6 +37,7 @@ class ProfileApplier:
         if enabled:
             subprocess.run(["systemctl", "restart", UNIT], check=True, capture_output=True, timeout=45)
 
+    @serialized_config(scoped=True)
     def recover(self):
         if not self.pending.exists(): return
         record = json.loads(self.pending.read_text())
@@ -43,6 +45,7 @@ class ProfileApplier:
         self._service(record["previous_enabled"])
         self.pending.unlink()
 
+    @serialized_config(scoped=True)
     def apply(self, envelope):
         self.recover(); current = load_config(str(self.path)); profile = envelope.get("profile")
         validate_profile(profile, current.trike_id); digest = profile_hash(profile)
@@ -64,7 +67,9 @@ class ProfileApplier:
 
 
 def main():
-    args = config_arg_parser("Synchronise centrally managed pedal-power assignments").parse_args(); applier = ProfileApplier(args.config); applier.recover(); config = load_config(args.config)
+    args = config_arg_parser("Synchronise centrally managed pedal-power assignments").parse_args()
+    if migrated(args.config): return 0
+    applier = ProfileApplier(args.config); applier.recover(); config = load_config(args.config)
     logging.basicConfig(level=config.get("logging.level", "INFO"))
     if not config.enabled("power_cadence_config_sync"): return 0
     desired, status = config.topic("config", "power_cadence", "desired"), config.topic("config", "power_cadence", "status")

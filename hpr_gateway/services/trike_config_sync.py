@@ -11,16 +11,23 @@ import queue
 import signal
 import subprocess
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import yaml
 
 from ..config import HprConfig, config_arg_parser, load_config
 from ..mqtt import make_client
+from ..config_transaction import migrated, serialized_config
 
 
 LOG = logging.getLogger(__name__)
 MAX_PROFILE_BYTES = 262144
+SECTIONS = ('identity', 'heart_rate', 'derailleur', 'video', 'tpms', 'power_cadence', 'gpio')
+LEGACY_UNITS = ('hpr-gpio-config-sync.service', 'hpr-tpms-config-sync.service',
+                'hpr-power-cadence-config-sync.service')
 
 
 def profile_hash(profile: dict) -> str:
@@ -40,9 +47,18 @@ def atomic_write(path: Path, content: bytes) -> None:
     if hasattr(os, "chown"):
         os.chown(temporary, stat.st_uid, stat.st_gid)
     os.replace(temporary, path)
+    if hasattr(os, 'O_DIRECTORY'):
+        fd = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 class Systemd:
+    def active(self, unit):
+        return subprocess.run(['systemctl', 'is-active', '--quiet', unit], timeout=10).returncode == 0
+
     def apply(self, unit: str, enabled: bool) -> None:
         command = ["systemctl", "enable", unit] if enabled else ["systemctl", "disable", "--now", unit]
         subprocess.run(command, check=True, capture_output=True, timeout=45)
@@ -57,10 +73,16 @@ class ProfileApplier:
         self.backup = self.path.with_name(".trike-config-sync-backup.yaml")
         self.pending = self.path.with_name(".trike-config-sync-pending")
 
+    @serialized_config()
     def recover(self) -> None:
-        if not self.pending.exists() or not self.backup.exists():
+        if not self.pending.exists():
             return
+        if not self.backup.exists():
+            raise RuntimeError('Interrupted config transaction has no backup; preserve and investigate')
+        transaction = json.loads(self.pending.read_text(encoding='utf-8'))
         atomic_write(self.path, self.backup.read_bytes())
+        for unit, enabled in transaction['previous_units'].items():
+            self.systemd.apply(unit, enabled)
         self.pending.unlink(missing_ok=True)
         LOG.warning("Recovered interrupted central trike configuration change")
 
@@ -74,9 +96,7 @@ class ProfileApplier:
             if key in source:
                 target[key] = source[key]
 
-    def apply(self, envelope: dict) -> str:
-        self.recover()
-        current = load_config(str(self.path))
+    def prepare(self, current, envelope):
         profile = envelope.get("profile")
         if not isinstance(profile, dict) or profile.get("schema_version") != 1:
             raise ValueError("Unsupported or missing trike profile")
@@ -85,13 +105,13 @@ class ProfileApplier:
         digest = profile_hash(profile)
         if envelope.get("hash") != digest:
             raise ValueError("Trike profile hash mismatch")
-        if current.get("configuration.trike_hash") == digest:
-            camera_drift = any(
-                any(current.get(f"video.cameras.{name}.{key}") != value for key, value in camera.items())
-                for name, camera in (profile.get("video", {}).get("cameras", {}) or {}).items()
-            )
-            if not camera_drift:
-                return digest
+        if not all(isinstance(profile.get(section), dict) for section in SECTIONS):
+            raise ValueError('Complete trike profile required; missing managed section')
+        for section, key in (('heart_rate', 'enabled'), ('derailleur', 'enabled'),
+                             ('video', 'enabled'), ('tpms', 'tpms_enabled'),
+                             ('power_cadence', 'power_cadence_enabled'), ('gpio', 'gpio_enabled')):
+            if type(profile[section].get(key)) is not bool:
+                raise ValueError('Missing or invalid enabled flag for ' + section)
 
         candidate = copy.deepcopy(current.data)
         changed_units: dict[str, bool] = {}
@@ -190,19 +210,79 @@ class ProfileApplier:
 
         candidate.setdefault("configuration", {})["trike_hash"] = digest
         HprConfig(candidate, str(self.path))
-        self.backup.write_bytes(self.path.read_bytes())
-        self.backup.chmod(0o600)
-        self.pending.write_text(digest, encoding="ascii")
+        return candidate, changed_units
+
+    def _previous_enabled(self, config, unit):
+        name = unit.removeprefix('hpr-').removesuffix('.service')
+        if name.startswith('video-'):
+            # Legacy camera units must NOT be resurrected on native-owner rollback.
+            return bool(self.systemd.active(unit))
+        return config.enabled(name.replace('-', '_'))
+
+    @serialized_config()
+    def apply(self, envelope: dict) -> str:
+        self.recover()
+        current = load_config(str(self.path))
+        candidate, changed_units = self.prepare(current, envelope)
+        digest = envelope['hash']
+        if candidate == current.data:
+            return digest
+        atomic_journal = self.pending
+        # Journal is durable before replacing the config; all writers share lock.
+        from .gpio_config_sync import atomic_write as write_journal
+        write_journal(self.backup, self.path.read_bytes())
+        write_journal(atomic_journal, json.dumps({'previous_units': {
+            unit: self._previous_enabled(current, unit) for unit in changed_units}}).encode())
         try:
             atomic_write(self.path, yaml.safe_dump(candidate, sort_keys=False).encode())
             for unit, enabled in changed_units.items():
                 self.systemd.apply(unit, enabled)
         except Exception:
-            atomic_write(self.path, self.backup.read_bytes())
+            self.recover()
             raise
-        finally:
-            self.pending.unlink(missing_ok=True)
+        self.pending.unlink(missing_ok=True)
         return digest
+
+
+class SyncEvidence:
+    """Fresh capability plus read-back evidence; no GPIO or actuator operations."""
+    def __init__(self, applier):
+        self.applier = applier
+        self.boot_id, self.seq = str(uuid.uuid4()), 0
+        self.envelope = None
+        self.error = None
+
+    def status(self):
+        self.seq += 1
+        single = False
+        try:
+            single = migrated(self.applier.path) and subprocess.run(
+                ['systemctl', 'is-active', '--quiet', *LEGACY_UNITS],
+                capture_output=True, timeout=2).returncode == 3
+        except (OSError, subprocess.SubprocessError):
+            pass
+        result = {'schema_version': 2, 'config_sync_version': 2, 'owner': 'trike-config-sync',
+                  'single_writer': single, 'boot_id': self.boot_id, 'seq': self.seq,
+                  'published_at': time.time(), 'state': 'waiting', 'hash': None,
+                  'section_hashes': {}, 'trike_id': load_config(str(self.applier.path)).trike_id}
+        if self.envelope:
+            result['hash'] = self.envelope['hash']
+            try:
+                current = load_config(str(self.applier.path))
+                candidate, _ = self.applier.prepare(current, self.envelope)
+                result['state'] = 'applied' if candidate == current.data else 'drift'
+                if result['state'] == 'applied':
+                    result['section_hashes'] = {
+                        section: profile_hash(self.envelope['profile'][section]) for section in SECTIONS}
+            except Exception as exc:
+                result['state'], result['error'] = 'error', str(exc)[:240]
+        if self.error:
+            result['state'], result['error'] = 'error', self.error
+            result['section_hashes'] = {}
+        if not single and migrated(self.applier.path):
+            result['state'], result['error'] = 'error', 'Cannot verify standalone writers inactive'
+            result['section_hashes'] = {}
+        return result
 
 
 def main() -> int:
@@ -210,17 +290,23 @@ def main() -> int:
     applier = ProfileApplier(args.config)
     applier.recover()
     config = load_config(args.config)
+    evidence = SyncEvidence(applier)
     logging.basicConfig(level=config.get("logging.level", "INFO"))
     desired = config.topic("config", "trike", "desired")
     status = config.topic("config", "trike", "status")
     messages: queue.Queue[bytes] = queue.Queue(maxsize=1)
     stopping = False
     client = make_client(config, f"hpr-{config.trike_id}-trike-config")
+    client.max_queued_messages_set(1)
+    connected_event = threading.Event()
 
     def on_connect(connected, _userdata, _flags, reason_code, _properties):
         if reason_code == 0:
+            connected_event.set()
             connected.subscribe(desired, qos=1)
-            connected.publish(status, json.dumps({"state": "waiting", "trike_id": config.trike_id}), qos=1, retain=True)
+
+    def on_disconnect(*_args):
+        connected_event.clear()
 
     def on_message(_client, _userdata, message):
         if message.topic == desired and message.payload and len(message.payload) <= MAX_PROFILE_BYTES:
@@ -233,22 +319,29 @@ def main() -> int:
         stopping = True
 
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
     client.connect_async(config.mqtt.host, config.mqtt.port, keepalive=30)
     client.loop_start()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    next_report = 0
     try:
         while not stopping:
             try:
                 envelope = json.loads(messages.get(timeout=1))
-                result = {"state": "applied", "hash": applier.apply(envelope), "trike_id": config.trike_id}
+                applier.apply(envelope)
+                evidence.envelope, evidence.error = envelope, None
+                next_report = 0
             except queue.Empty:
-                continue
+                pass
             except Exception as exc:
                 LOG.exception("Central trike configuration rejected or rolled back")
-                result = {"state": "error", "error": str(exc), "trike_id": config.trike_id}
-            client.publish(status, json.dumps(result), qos=1, retain=True)
+                evidence.error = str(exc)[:240]
+                next_report = 0
+            if connected_event.is_set() and time.monotonic() >= next_report:
+                client.publish(status, json.dumps(evidence.status()), qos=1, retain=True)
+                next_report = time.monotonic() + 5
     finally:
         client.disconnect()
         client.loop_stop()

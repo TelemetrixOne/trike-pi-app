@@ -273,6 +273,10 @@ declare -a service_pairs=(
 for pair in "${service_pairs[@]}"; do
   key="${pair%%:*}"
   unit="${pair#*:}"
+  if [ "${key}" = "gpio_config_sync" ] && [ -f "$(dirname "${CONFIG_PATH}")/.config-single-writer-v2" ]; then
+    check_unit hpr-trike-config-sync.service
+    continue
+  fi
   if [ "$(cfg "services.${key}.enabled" --default false)" = "true" ]; then
     check_unit "${unit}"
   fi

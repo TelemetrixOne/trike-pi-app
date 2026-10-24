@@ -16,6 +16,7 @@ import yaml
 from ..config import HprConfig, config_arg_parser, load_config
 from ..gpio_profile import profile_hash, validate_profile
 from ..mqtt import make_client
+from ..config_transaction import migrated, serialized_config
 
 
 LOG = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class ProfileApplier:
         stat = self.path.stat()
         atomic_write(self.path, content, stat.st_mode & 0o777, (stat.st_uid, stat.st_gid))
 
+    @serialized_config(scoped=True)
     def recover(self):
         if not self.pending.exists():
             return
@@ -86,6 +88,7 @@ class ProfileApplier:
         self.pending.unlink()
         LOG.warning("Recovered interrupted GPIO config change")
 
+    @serialized_config(scoped=True)
     def apply(self, envelope):
         self.recover()
         current = load_config(str(self.path))
@@ -128,6 +131,8 @@ class ProfileApplier:
 
 def main():
     args = config_arg_parser("Synchronise centrally managed GPIO settings").parse_args()
+    if migrated(args.config):
+        return 0
     applier = ProfileApplier(args.config)
     applier.recover()
     config = load_config(args.config)

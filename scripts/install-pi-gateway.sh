@@ -377,7 +377,7 @@ install_unit() {
   if [ "${module}" = "gpio_control" ]; then
     unit_type="notify"
   fi
-  if [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ] || [ "${module}" = "power_cadence_config_sync" ] || [ "${module}" = "bluetooth_recovery" ]; then
+  if [ "${module}" = "trike_config_sync" ] || [ "${module}" = "gpio_config_sync" ] || [ "${module}" = "tpms_config_sync" ] || [ "${module}" = "power_cadence_config_sync" ] || [ "${module}" = "bluetooth_recovery" ]; then
     unit_user="root"
     unit_group="root"
   fi
@@ -671,6 +671,14 @@ systemctl daemon-reload
 enable_service_if_configured() {
   local config_key="$1"
   local unit="$2"
+  if [ -f "$(dirname "${CONFIG_PATH}")/.config-single-writer-v2" ]; then
+    case "${config_key}" in
+      gpio_config_sync|tpms_config_sync|power_cadence_config_sync)
+        systemctl disable --now "${unit}" 2>/dev/null || true
+        return
+        ;;
+    esac
+  fi
   if [ "$(cfg "services.${config_key}.enabled" --default false)" = "true" ]; then
     systemctl enable "${unit}"
     if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
