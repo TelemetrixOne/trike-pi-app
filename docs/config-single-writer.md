@@ -78,3 +78,28 @@ no-op, TPMS/HRM isolation, incomplete profile rejection, scoped replay fencing,
 foreign recovery, multiple-pending rejection, rollback and fresh truthful status.
 Live deployment, boot persistence, and an observed configuration-save trial are
 separate validations and must not be claimed while the Pi is offline.
+
+## Trike1 deployment record — 24 October 2026
+
+Source `61114a3` was pushed to GitHub main before rollout. Fresh live comparison
+matched all four expected sync sources and showed exactly four canonical sync
+processes. The central owner refreshed the authoritative hpr/trike1 profile hash
+`421e81ab961814fd8f6edac09e70f43dda45bc6932d83fda904f3119a9d1715a`.
+The passive retained desired matched, with zero hardware `changed_units`.
+
+Guarded deployment backed up to
+`/opt/hpr/backups/config-single-writer-20261024T060945Z` and restarted only the
+full sync owner (17:09:50 AEDT, PID 3628, active, NRestarts=0). Three standalone
+sync units became disabled/inactive with migration guards. All five installed
+sources matched committed bytes. YAML remained byte-identical, SHA256
+`19772601a85ce10186bf8dd53293c3e3fe13368c50c447deb9b4aaaa4ae0b311`.
+GPIO PID 942, native-video owner 624 and MediaMTX 593 retained their original
+start times and zero restart counts; legacy front/rear video units stayed inactive.
+
+Both passive validator runs passed fresh increasing v2 applied evidence, stable
+boot `abaf2c10-a260-4a4a-8b85-26fffd1c4e4d`, matching full hash and seven section
+hashes. The when-reachable heartbeat was stopped after success. No runtime
+hardware service restarted, no actuator test commands were sent and no Pi reboot
+was performed. Web v1.17.0 adoption/scoped-retained cleanup is owned and validated
+separately by the web chat. Boot persistence and an observed configuration-save
+trial remain untested; no reboot or settings changes were made to test them.
