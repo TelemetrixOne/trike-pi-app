@@ -107,3 +107,26 @@ uses the existing atomic writer preserving owner/mode. Two fresh applied v2
 heartbeats must retain the same central profile hash; every other parsed YAML
 value and the GPIO/video/health-agent process fingerprints must stay unchanged.
 No remote control commands or hardware-service restarts are part of this step.
+
+The endpoint migration source `f6dba3b` was committed/pushed before live use.
+Backup: `/opt/hpr/backups/retired-endpoint-20261029T232232Z`. The first 25-second
+status-validation window timed out; subsequent read-only inspection found the
+owner active with no automatic restarts and correct applied evidence. A repeat
+two-heartbeat passive validation passed without another restart. The full sync
+owner PID is 8400, boot `c5c43f1b-7efb-4038-a29f-b2366c2b2582`; applied and desired
+hashes remain `ce1f3073f4db7a710ae3fef5780d09e54592ef14257472b15efa287b816b51dd`.
+Comparison against the private original proves every other parsed YAML value
+unchanged. New config SHA256:
+`3d263b86834b02b6de2ac19345acaae200dd9b6ef56480bd28b36c1270edca7c`.
+GPIO 6986, health agent 7751, video 636 and MediaMTX 596 did not restart during
+endpoint removal. All 181 tests passed. No boot test/reboot or physical actuator
+test was performed.
+
+The web owner backed up and cleared the 28 reappeared, exactly owned discovery
+metadata entries. Both brokers then had zero retained entries and zero retained
+or nonretained discovery traffic during separate 20-second observations. The
+86 native control/config topic set was unchanged, as were actuator states,
+targets and desired configs. Live telemetry scalars and heartbeat sequence/time
+fields continued changing normally; those are not claimed byte-identical.
+Private broker recovery snapshots are outside the active platform at
+`/home/shane/retired-platform-backups/final-discovery-20261029T232315Z`.
