@@ -66,3 +66,44 @@ fresh native state with the same enablement. It never publishes enable commands.
 GPIO/video process fingerprints and gateway config must remain unchanged. This
 step restarts only the health agent; it does not delete broker metadata. Any
 failure leaves the private original backup available and reports for inspection.
+
+## Live publisher removal — 30 October 2026
+
+The Pi returned online. Fresh inspection matched the expected pre-cleanup config
+and GPIO sources. With explicit stationary/shared-GPIO-restart approval, source
+`bb1086a` was deployed via the guarded updater. Backup:
+`/opt/hpr/backups/native-mqtt-only-20261029T231820Z`. DRS passive validation passed:
+RIDER_CONTROL, target OPEN, phase released, position_verified false. GPIO owner
+PID 6986 remained active with NRestarts=0; no actuator test commands were sent.
+
+The separately approved health-agent migration source `8121a0f` was pushed before
+deployment. Original SHA256 was
+`313267400af1653f611786f10781b3ccfc9aae9a5e7707a2b1423898a4878750`;
+the metadata-only result is
+`87ec6a145243d1ab6df50b391839fee0f468112a845d1eee7e60d8ca6e5019fd`.
+Backup: `/opt/hpr/backups/health-agent-native-mqtt-20261029T232037Z`.
+Native monitoring/remediation stayed enabled, with a fresh native state after
+restart. Health-agent PID 7751 was active, NRestarts=0. All remaining source
+statements were structurally unchanged. No active Pi race-agent unit was found.
+
+Both installed canonical sources matched committed bytes. Gateway YAML stayed
+byte-identical, SHA256
+`1627ffe5fc8b7f1eedc2b82a6469b1feac9cbf4ff37f274eee16f086e7185243`.
+Configuration owner PID 1025, video owner 636 and MediaMTX 596 were not restarted.
+No warning/error journal entries were observed for the two affected services
+after deployment. All 178 tests passed. Physical GPIO/DRS confirmation remains
+pending; software status is not a position sensor. Retained metadata cleanup is
+coordinated separately with the web owner; inert endpoint removal needs a
+separately approved config-sync reload. Private source/config backups and Git
+history are intentionally retained, not silently scrubbed for public release.
+
+The operator subsequently approved removal of the inert endpoint block and a
+configuration-sync-only reload. `scripts/remove-retired-pi-network-endpoint.py`
+requires that approval and the expected current YAML SHA256, refuses active
+native endpoint keys or unknown block shapes, backs up config/unit privately,
+stops only the full sync owner and takes the shared configuration lock. It
+removes only the explicitly supplied block, validates the entire candidate and
+uses the existing atomic writer preserving owner/mode. Two fresh applied v2
+heartbeats must retain the same central profile hash; every other parsed YAML
+value and the GPIO/video/health-agent process fingerprints must stay unchanged.
+No remote control commands or hardware-service restarts are part of this step.
