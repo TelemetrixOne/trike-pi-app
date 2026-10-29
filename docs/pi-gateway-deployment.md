@@ -25,7 +25,7 @@ The config controls:
 - Pi hostname and optional recorded Pi IPs
 - trike technical ID, such as `trike1`
 - display name metadata
-- MQTT, Home Assistant, and Nginx endpoints
+- MQTT and Nginx endpoints
 - HPR credentials
 - Tailscale registration behavior
 - enabled services

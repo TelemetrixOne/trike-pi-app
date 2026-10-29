@@ -30,7 +30,6 @@ Interfaces observed:
 Tailscale status:
 
 - Source Pi: `100.105.239.87`, Tailscale name `raspberry-pi`
-- Home Assistant host observed: `100.109.71.98`, Tailscale name `homeassistant`, active
 - Multiple phone/client nodes are present in tailnet status.
 
 Runtime rule: these IPs are inventory evidence only. Runtime endpoints must come from `/etc/hpr/hpr.yaml`.
@@ -153,7 +152,6 @@ Current active topics include:
   - `hpr/trike1/control/<circuit>/state`
   - `hpr/trike1/control/<circuit>/source`
   - `hpr/trike1/input/<input>/state`
-  - `homeassistant/.../config` discovery topics
 - Pi health:
   - `hpr/trike1/pi/power_health`
   - `hpr/trike1/pi/throttled_raw`
@@ -211,7 +209,7 @@ Current config evidence:
   - `spare_taillamp`: GPIO 23
 - Disabled aux circuits exist for future/review.
 
-GPIO service has richer telemetry and Home Assistant discovery behavior. Any repo replacement must be validated on hardware before replacing the live service.
+GPIO service has richer telemetry behavior. Any repo replacement must be validated on hardware before replacing the live service.
 
 ## Camera / go2rtc / WebRTC / ffmpeg
 
@@ -228,7 +226,7 @@ Classification: `UNKNOWN_REVIEW_REQUIRED`, likely retired/stale, but leave in pl
 
 Runtime hardcoded values found in active scripts/units:
 
-- MQTT/Home Assistant broker host: `100.109.71.98`
+- MQTT broker host: `100.109.71.98`
 - Source Pi Tailscale IP: `100.105.239.87` appears in network inventory only.
 - WLAN lease: `10.0.0.15`
 - Loopback: `127.0.0.1`
@@ -294,12 +292,12 @@ Do not delete without approval. Candidates based on no active process/unit evide
 
 ## Components Requiring Review
 
-- Whether legacy heartbeat topic `hpv/01/gw/last_seen` is still consumed by Home Assistant.
-- Whether TPMS current Home Assistant entities expect `tpms1`-style topics or physical names such as `rear`.
+- Whether legacy heartbeat topic `hpv/01/gw/last_seen` has any remaining consumers.
+- Whether current TPMS consumers expect `tpms1`-style topics or physical names such as `rear`.
 - Whether `tpms7` placeholder code is unused or still referenced somewhere operational.
 - GPS device mismatch: gpsd process references `/dev/ttyACM0`, device listing showed `/dev/ttyUSB0`.
 - go2rtc camera config status.
-- GPIO telemetry/discovery feature parity before replacing live GPIO service.
+- GPIO telemetry feature parity before replacing live GPIO service.
 - Whether systemd services should run as a dedicated `hpr` user in the future; live services currently run as `admin`.
 
 ## 2026-09-17 GPIO Config-Only Update

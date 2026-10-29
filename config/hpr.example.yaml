@@ -23,13 +23,6 @@ network:
     username: "hpr"
     password: "hPr01"
 
-  home_assistant:
-    host: "CHANGE_ME"
-    port: 8123
-    url: "http://CHANGE_ME:8123"
-    username: "hpr"
-    password: "hPr01"
-
   mediamtx:
     enabled: false
     public_host: "CHANGE_ME"
@@ -190,7 +183,6 @@ gpio:
     scl_pin: 3
   horn_remote_pulse_seconds: 1.0
   service:
-    discovery_enabled: true
     poll_interval_seconds: 0.2
   circuits:
     headlight:
@@ -225,7 +217,6 @@ gpio:
       output_pin: 17
       output_active_high: false
       boot_default: "OFF"
-      icon: "mdi:bullhorn"
 
   sense_inputs:
     headlamp:

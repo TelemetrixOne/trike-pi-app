@@ -113,7 +113,6 @@ class GpioReliabilityTests(unittest.TestCase):
                 entered.set()
                 release.wait(1)
             monitor._try_initialise = initialise
-            monitor._publish_discovery = Mock()
             try:
                 monitor.start()
                 self.assertTrue(entered.wait(1))

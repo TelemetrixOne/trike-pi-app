@@ -29,7 +29,7 @@ Front device identity, rotation, stream path, credentials and HDMI configuration
 remain central; only quality fields listed above are local. Optional per-camera
 `capture_size` overrides the shared capture-size default; verify camera-native
 support before setting it. An omitted capture_size retains the shared default.
-No web configuration section or Home Assistant changes are needed.
+No web configuration section changes are needed.
 
 The normal video launcher reads central settings through the existing loader,
 then applies local quality. This persists through service starts, reboot and

@@ -41,13 +41,8 @@ class HprConfig:
             username=self.require_str("network.mqtt.username"),
             password=self.require_str("network.mqtt.password"),
         )
-        home_assistant_host = self.require_str("network.home_assistant.host")
-        self.require("network.home_assistant.port")
-        self.require_str("network.home_assistant.url")
         if self.mqtt.host.lower() == "auto":
             raise ConfigError("network.mqtt.host must be resolved before Pi deployment")
-        if home_assistant_host.lower() == "auto":
-            raise ConfigError("network.home_assistant.host must be resolved before Pi deployment")
         self.validate()
 
     def get(self, dotted: str, default: Any = None) -> Any:

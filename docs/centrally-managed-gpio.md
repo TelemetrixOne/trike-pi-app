@@ -192,7 +192,7 @@ introduced by this change.
 ## Topic migration
 
 The following topic changes accompany the replacement hardware profile. No broker
-retained messages or Home Assistant entities are automatically deleted.
+retained messages are automatically deleted.
 
 | Existing topic suffix | New behaviour |
 | --- | --- |
@@ -209,7 +209,7 @@ retained messages or Home Assistant entities are automatically deleted.
 | `control/drs/*` | Remains disabled pending calibrated actuator implementation |
 
 All suffixes have the configured `<topic_root>/<trike_id>/` prefix. Review old
-Home Assistant/dashboard consumers and retained discovery entries during a
+dashboard consumers and retained entries during a
 separately approved migration. They remain `UNKNOWN_REVIEW_REQUIRED` until checked.
 
 ## Deployment and rollback proposal

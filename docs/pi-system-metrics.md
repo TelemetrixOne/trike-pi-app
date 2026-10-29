@@ -43,8 +43,8 @@ produce null counts and `logs_complete: false`, never a misleading healthy zero.
 
 Sampling runs in a daemon worker, outside service checks and MQTT callbacks. A
 single additional message is published approximately every ten seconds; collectors
-do not actuate hardware, restart services, create discovery entities, or modify
-configuration/Home Assistant. The separate existing live health agent is untouched.
+do not actuate hardware, restart services, or modify configuration. The separate
+existing live health agent is untouched.
 
 Web integration: add five items in Pi Services Health, styled like existing items:
 CPU %, RAM %, Temperature °C, Disk used %, Logs with separate warning/error counts labelled

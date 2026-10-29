@@ -44,7 +44,7 @@ The source of the electrical/kernel-level repeated edges remains unverified.
 - Profile validation rejects zero/negative/non-finite timing and invalid moving
   averages. No central pin assignment, polarity or calibration was changed.
 
-No Home Assistant settings, video code or BLE architecture was changed. The
+No video code or BLE architecture was changed. The
 configuration synchronisers' shared-writer risk identified in the offline audit
 was not the measured fault: live GPIO contents agreed, and no restart loop was
 observed. Resolving revision ordering still requires central producer coordination.

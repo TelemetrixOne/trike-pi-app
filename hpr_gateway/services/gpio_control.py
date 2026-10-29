@@ -4,10 +4,10 @@
 Features
 - Reads local physical switch inputs.
 - Drives output pins for trike circuits.
-- Publishes MQTT state topics and Home Assistant discovery.
+- Publishes native MQTT control, state and health topics.
 - Supports ADS1115 telemetry for ambient light, battery voltage, current,
   power, Ah used, and SOC.
-- Publishes additional engineer-provided sense inputs as separate binary sensors.
+- Publishes additional engineer-provided sense inputs as native MQTT states.
 - Keeps GPIO control alive if telemetry hardware or libraries are unavailable.
 """
 
@@ -76,16 +76,12 @@ def configure(config: HprConfig) -> None:
         "username": config.mqtt.username,
         "password": config.mqtt.password,
         "client_id": f"{config.trike_id}_control_gateway",
-        "discovery_prefix": str(service.get("discovery_prefix", "homeassistant")),
         "topic_root": config.topic_root,
         "gpio_evidence_topic": f"{config.resolve_topic(config.get('health.base_topic'), 'pi')}/gpio_evidence",
         "qos": int(service.get("qos", 1)),
         "retain_state": bool(service.get("retain_state", True)),
-        "retain_discovery": bool(service.get("retain_discovery", True)),
     }
     SERVICE = {
-        "discovery_enabled": bool(service.get("discovery_enabled", True)),
-        "publish_discovery_on_start": bool(service.get("publish_discovery_on_start", True)),
         "republish_state_on_reconnect": bool(service.get("republish_state_on_reconnect", True)),
         "poll_interval_seconds": float(service.get("poll_interval_seconds", 0.02)),
         "log_level": str(config.get("logging.level", "INFO")),
@@ -130,7 +126,7 @@ def configure(config: HprConfig) -> None:
             "output_pin": int(item.get("output_pin", item.get("pin"))),
             "boot_default": str(item.get("boot_default", "OFF")),
             "output_active_high": bool(item.get("output_active_high", True)),
-            "icon": str(item.get("icon", "mdi:toggle-switch")),
+            "icon": str(item.get("icon", "")),
             "friendly_name": str(item.get("friendly_name", name.replace("_", " ").title())),
             "switch_mode": str(item.get("switch_mode", "binary")),
             "switch_pin": item.get("switch_pin"),
@@ -155,7 +151,7 @@ def configure(config: HprConfig) -> None:
             "active_high": bool(item.get("active_high", True)),
             "state_semantics": item.get("state_semantics", "legacy"),
             "friendly_name": str(item.get("friendly_name", name.replace("_", " ").title())),
-            "icon": str(item.get("icon", "mdi:electric-switch")),
+            "icon": str(item.get("icon", "")),
         }
     INPUTS = {config.trike_id: inputs}
     drs = (gpio.get("pwm_outputs", {}) or {}).get("drs", {}) or {}
@@ -427,53 +423,10 @@ class TelemetryMonitor:
                 "sample_age_seconds": round(age, 2) if age is not None else None,
                 "error": self._last_init_error}
 
-    def _publish_discovery(self) -> None:
-        if not self._enabled or not SERVICE["discovery_enabled"]:
-            return
-
-        trike = TELEMETRY["trike"]
-        device = {
-            "identifiers": [f"{trike}_control_telemetry"],
-            "name": f"{trike.upper()} Control Telemetry",
-            "manufacturer": "HPR",
-            "model": "GPIO Control Telemetry",
-        }
-
-        sensors = {
-            "battery_voltage": ("Battery Voltage", "voltage", "V", "mdi:battery-high"),
-            "current_a": ("Battery Current", "current", "A", "mdi:current-dc"),
-            "power_w": ("Battery Power", "power", "W", "mdi:flash"),
-            "ah_used": ("Battery Ah Used", None, "Ah", "mdi:battery-minus"),
-            "soc": ("Battery SOC", "battery", "%", "mdi:battery"),
-            "ambient_light_voltage": ("Ambient Light Voltage", "voltage", "V", "mdi:brightness-6"),
-            "ambient_light_pct": ("Ambient Light", None, "%", "mdi:brightness-6"),
-        }
-
-        for key, (name, device_class, unit, icon) in sensors.items():
-            object_id = f"{trike}_control_telemetry_{key}"
-            payload = {
-                "name": name,
-                "object_id": object_id,
-                "unique_id": object_id,
-                "state_topic": f"{self._topic_root()}/{key}",
-                "device": device,
-                "icon": icon,
-            }
-            if device_class:
-                payload["device_class"] = device_class
-            if unit:
-                payload["unit_of_measurement"] = unit
-            self._publish(
-                f"{MQTT['discovery_prefix']}/sensor/{object_id}/config",
-                json.dumps(payload),
-                retain=MQTT["retain_discovery"],
-            )
-
     def start(self) -> None:
         if not self._enabled:
             LOG.info("Telemetry disabled in config")
             return
-        self._publish_discovery()
         self._worker = threading.Thread(target=self._run, name="gpio-adc", daemon=True)
         self._worker.start()
 
@@ -1265,88 +1218,6 @@ class GPIOControlService:
         if self._mqtt_connected:
             self._publish(MQTT["gpio_evidence_topic"], json.dumps(self._gpio_evidence()), retain=False)
 
-    def _discovery_topic(self, component: str, object_id: str) -> str:
-        return f"{MQTT['discovery_prefix']}/{component}/{object_id}/config"
-
-    def _device_block(self, trike: str) -> dict:
-        return {
-            "identifiers": [f"{trike}_control"],
-            "name": f"{trike.upper()} Control",
-            "manufacturer": "HPR",
-            "model": "Control Module",
-        }
-
-    def _publish_discovery(self) -> None:
-        if not SERVICE["discovery_enabled"]:
-            return
-
-        for runtime in self._circuits.values():
-            trike = runtime.config.trike
-            name = runtime.config.name
-            friendly = runtime.config.friendly_name
-            icon = runtime.config.icon
-            base = self._base_topic(trike, name)
-            device = self._device_block(trike)
-
-            switch_object_id = f"{trike}_control_{name}"
-            switch_payload = {
-                "name": friendly,
-                "object_id": switch_object_id,
-                "unique_id": switch_object_id,
-                "icon": icon,
-                "command_topic": f"{base}/set",
-                "state_topic": f"{base}/state",
-                "payload_on": STATE_ON,
-                "payload_off": STATE_OFF,
-                "state_on": STATE_ON,
-                "state_off": STATE_OFF,
-                "device": device,
-            }
-            self._publish(self._discovery_topic("switch", switch_object_id), json.dumps(switch_payload), retain=MQTT["retain_discovery"])
-
-            input_object_id = f"{trike}_control_{name}_switch"
-            input_payload = {
-                "name": f"{friendly} Switch",
-                "object_id": input_object_id,
-                "unique_id": input_object_id,
-                "icon": "mdi:toggle-switch",
-                "state_topic": self._switch_topic(trike, name),
-                "payload_on": STATE_ON,
-                "payload_off": STATE_OFF,
-                "device": device,
-            }
-            self._publish(self._discovery_topic("binary_sensor", input_object_id), json.dumps(input_payload), retain=MQTT["retain_discovery"])
-
-            source_object_id = f"{trike}_control_{name}_source"
-            source_payload = {
-                "name": f"{friendly} Source",
-                "object_id": source_object_id,
-                "unique_id": source_object_id,
-                "icon": "mdi:source-branch",
-                "state_topic": f"{base}/source",
-                "device": device,
-            }
-            self._publish(self._discovery_topic("sensor", source_object_id), json.dumps(source_payload), retain=MQTT["retain_discovery"])
-
-        for runtime in self._sense_inputs.values():
-            trike = runtime.config.trike
-            name = runtime.config.name
-            device = self._device_block(trike)
-            object_id = f"{trike}_input_{name}"
-            payload = {
-                "name": runtime.config.friendly_name,
-                "object_id": object_id,
-                "unique_id": object_id,
-                "icon": runtime.config.icon,
-                "state_topic": self._sense_topic(trike, name),
-                "payload_on": STATE_ON,
-                "payload_off": STATE_OFF,
-                "device": device,
-            }
-            self._publish(self._discovery_topic("binary_sensor", object_id), json.dumps(payload), retain=MQTT["retain_discovery"])
-
-        self._telemetry._publish_discovery()
-
     def _on_switch_event(self, circuit_key: str) -> None:
         runtime = self._circuits[circuit_key]
         self._apply_logic(runtime, publish=True)
@@ -1384,8 +1255,6 @@ class GPIOControlService:
             if kind == "command":
                 self._handle_message(message)
             elif kind == "connected":
-                if SERVICE["publish_discovery_on_start"]:
-                    self._publish_discovery()
                 if SERVICE["republish_state_on_reconnect"]:
                     self._publish_all_states()
                     self._telemetry.publish_latest()

@@ -5,8 +5,8 @@ GitHub main `a86db12b4011cf6f583bde7f503c29bd14c69e1b`.
 
 The Pi is offline. These findings describe repository behaviour and local
 simulations, not a fresh comparison with `/opt/hpr`, systemd or
-`/etc/hpr/hpr.yaml`. No production GPIO code, configuration, web service or
-Home Assistant setting was changed. Do not use the historical wiring/polarity
+`/etc/hpr/hpr.yaml`. No production GPIO code, configuration or web service
+was changed. Do not use the historical wiring/polarity
 notes in `centrally-managed-gpio.md` as today's configuration.
 
 ## What is already reasonably quiet

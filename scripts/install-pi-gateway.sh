@@ -78,8 +78,7 @@ if [ ! -f "${CONFIG_PATH}" ]; then
 fi
 
 for required_key in \
-  hpr.trike_id network.mqtt.host network.mqtt.username network.mqtt.password \
-  network.home_assistant.host
+  hpr.trike_id network.mqtt.host network.mqtt.username network.mqtt.password
 do
   required_value="$(read_yaml_scalar "${required_key}" '')"
   if [ -z "${required_value}" ] || [ "${required_value}" = "CHANGE_ME" ]; then

@@ -2,7 +2,7 @@
 
 Only DRS handling is changed. Pins, calibration, PWM frequency, timings, startup
 mode, switch debounce/polarity and all other GPIO configuration remain central
-and unchanged. No Home Assistant or other service changes are required.
+and unchanged. No other service changes are required.
 
 The old state is a commanded target, NOT a position sensor. DRS has no physical
 position feedback. A `released` phase means only that PWM was released; it does

@@ -15,7 +15,7 @@ Scanned paths:
 Result:
 
 - No legacy `mqtt_hpv` credentials, Pi login credentials, or display-name-based MQTT topics are present in runtime Pi gateway code or installer/validator scripts.
-- Endpoint lookup in runtime code is config-driven through `network.mqtt.host`, `network.home_assistant.*`, and generated central service metadata such as `network.mediamtx.*`.
+- Endpoint lookup in runtime code is config-driven through `network.mqtt.host` and generated central service metadata such as `network.mediamtx.*`.
 - The only runtime code hit for `host` is the config loader reading `network.mqtt.host`.
 - MQTT topic and Tailscale hostname values support `{topic_root}` and `{trike_id}` templates. Operator values are edited in `hpr-standalone-docker/config/hpr-race.yaml` and rendered into the per-trike runtime file.
 - The Pi install root is generic: `/opt/hpr/gateway` by default. No repo-managed Pi runtime path includes `/trike1` or another trike-specific directory.
@@ -37,7 +37,7 @@ The wider repository still contains historical/reference matches in:
 
 - `source/` read-only reference exports.
 - Existing Docker migration docs and reports under `hpr-standalone-docker/reports/`.
-- Existing Docker/Home Assistant/Nginx runtime files where endpoints, URLs, or browser asset URLs are part of the separate standalone Docker migration surface.
+- Existing Docker/Nginx runtime files where endpoints, URLs, or browser asset URLs are part of the separate standalone Docker migration surface.
 
 Those files were not changed as part of this Pi gateway task because the worktree already had unrelated edits and the user asked this task to preserve current behavior.
 

@@ -79,7 +79,7 @@ OFF, awaiting latency/visual acceptance. See the subsequent enablement below.
 Remaining: real latency tests for both streams; physical HDMI motion/rotation/
 latency; real boot/re-sync behaviour when approved; TM1 live views, recording
 library and downloaded-clip acceptance; legacy FFmpeg/HDMI/PiP integration if
-those rollback paths are used. No central-platform or Home Assistant changes
+those rollback paths are used. No central-platform changes
 were made.
 
 ## Subsequent permanent enablement — 14:48 AEDT
