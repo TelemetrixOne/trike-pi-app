@@ -47,3 +47,22 @@ telemetry worker startup without discovery publication, and existing GPIO/DRS,
 single-writer, BLE, GPS and video regressions. A live retained-topic inventory,
 passive deployment validation and observed physical GPIO/DRS verification remain
 pending; do not claim live removal while the Pi is unreachable.
+
+## Separately installed observer migration
+
+When the Pi returned, a separate `/opt/hpr/trike1-health-agent/health_agent.py`
+was found actively publishing metadata, outside the canonical gateway modules.
+The operator separately approved removing only that publisher and restarting
+the health agent. `scripts/deploy-pi-health-agent-native-mqtt.py` refuses any
+source other than the audited SHA256, privately preserves source/config/env/unit,
+and uses `hpr_gateway.retired_metadata.strip_health_discovery` to remove exactly
+the metadata method and its startup invocation. AST equality checks prove the
+other source statements are unchanged. The original observer is not silently
+replaced by a different monitoring implementation.
+
+The updater reads native state and the retained enable setting before restart,
+refuses unless natural subscription can preserve enablement, then requires a
+fresh native state with the same enablement. It never publishes enable commands.
+GPIO/video process fingerprints and gateway config must remain unchanged. This
+step restarts only the health agent; it does not delete broker metadata. Any
+failure leaves the private original backup available and reports for inspection.
