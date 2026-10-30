@@ -59,14 +59,15 @@ func main() {
 	bad := makeClient(*deniedIP)
 	err = bad.StartRecording(*address, session)
 	bad.Close()
-	publishDenied := err != nil && strings.Contains(err.Error(), "401")
+	publishError := err
+	publishDenied := authDenied(err)
 	bad = makeClient(*deniedIP)
 	must(bad.Start())
 	_, _, err = bad.Describe(u)
 	bad.Close()
-	readDenied := err != nil && strings.Contains(err.Error(), "401")
+	readDenied := authDenied(err)
 	if !publishDenied || !readDenied {
-		panic("ACL did not reject the untrusted loopback peer")
+		panic(fmt.Sprintf("ACL denial evidence missing: publish=%v read=%v", publishError, err))
 	}
 	reader := makeClient("")
 	must(reader.Start())
@@ -138,6 +139,15 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func authDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "401") || strings.Contains(text, "403") ||
+		strings.Contains(text, "server asked for authentication") || strings.Contains(text, "no credentials were provided")
 }
 
 // Keep the compile-time DialContext contract explicit across gortsplib updates.
