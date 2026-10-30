@@ -44,7 +44,8 @@ def main():
     # The unused updater pulled legacy OpenPGP/Git dependencies into the broker.
     for name in ('upgrade.go', 'check_version.go', 'extract_executable_other.go', 'extract_executable_windows.go'):
         (source / 'internal/upgrade' / name).unlink()
-    (source / 'internal/upgrade/upgrade.go').write_bytes(patch.read_bytes())
+    patch_bytes = patch.read_bytes().replace(b'\r\n', b'\n')
+    (source / 'internal/upgrade/upgrade.go').write_bytes(patch_bytes)
     # TM1 cameras are independent USB capture publishers. Use the upstream
     # unsupported-CSI source implementation on both architectures; do not bundle
     # unrelated libcamera/IPA binaries inside this RTSP broker.
@@ -55,12 +56,12 @@ def main():
     other = (camera / 'source_other.go').read_text()
     prefix = '//go:build !linux || (!arm && !arm64)\n\n'
     if not other.startswith(prefix): raise RuntimeError('Upstream CSI stub changed; review required')
-    (camera / 'source_other.go').write_text(other[len(prefix):])
+    (camera / 'source_other.go').write_text(other[len(prefix):], encoding='utf-8', newline='\n')
     # The HLS generator verifies its asset against a source-pinned SHA256.
     # Do not run the Git version getter or CSI binary downloader.
     go('generate', './internal/servers/hls')
     # Upstream embeds this generated version file. No race/vehicle data is used.
-    (source / 'internal/core/VERSION').write_text('v1.21.3-tm1.1\n')
+    (source / 'internal/core/VERSION').write_text('v1.21.3-tm1.1\n', encoding='utf-8', newline='\n')
     binary = (args.output / 'mediamtx').resolve()
     go('build', '-trimpath', '-buildvcs=false', '-o', str(binary), '.', target=True)
     environment_amd64 = dict(environment, GOOS='linux', GOARCH='amd64')
@@ -68,21 +69,23 @@ def main():
                     '-o', str((args.output / 'mediamtx-linux-amd64').resolve()), '.'],
                    cwd=source, env=environment_amd64, check=True)
     modules = subprocess.check_output([str(args.go.resolve()), 'version', '-m', str(binary)], text=True)
-    (args.output / 'build-modules.txt').write_text(modules)
+    lines = modules.splitlines()
+    lines[0] = 'mediamtx: ' + lines[0].split(': ', 1)[1]
+    (args.output / 'build-modules.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8', newline='\n')
     (args.output / 'go.mod').write_bytes((source / 'go.mod').read_bytes())
     (args.output / 'go.sum').write_bytes((source / 'go.sum').read_bytes())
     go('install', 'golang.org/x/vuln/cmd/govulncheck@v1.9.0')
     tool = args.output / 'go-tools/bin' / ('govulncheck.exe' if os.name == 'nt' else 'govulncheck')
-    with (args.output / 'govulncheck-binary.jsonl').open('w') as report:
+    with (args.output / 'govulncheck-binary.jsonl').open('w', encoding='utf-8', newline='\n') as report:
         result = subprocess.run([str(tool.resolve()), '-mode=binary', '-json', str(binary)],
                                 env=environment, stdout=report, check=False)
-    with (args.output / 'govulncheck-amd64.jsonl').open('w') as report:
+    with (args.output / 'govulncheck-amd64.jsonl').open('w', encoding='utf-8', newline='\n') as report:
         amd64_result = subprocess.run([str(tool.resolve()), '-mode=binary', '-json', str((args.output / 'mediamtx-linux-amd64').resolve())],
                                      env=environment, stdout=report, check=False)
     metadata = {'source_commit': COMMIT, 'source_archive_sha256': ARCHIVE_SHA256,
                 'upstream_tag': 'v1.21.3', 'version_label': 'v1.21.3-tm1.1',
                 'toolchain': 'go1.27.3', 'patch': 'golang.org/x/net v0.62.0',
-                'updater_patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
+                'updater_patch_sha256': hashlib.sha256(patch_bytes).hexdigest(),
                 'feature_profile': 'Git-managed updater; upstream CSI stub; USB capture remains external',
                 'go_mod_sha256': hashlib.sha256((source / 'go.mod').read_bytes()).hexdigest(),
                 'go_sum_sha256': hashlib.sha256((source / 'go.sum').read_bytes()).hexdigest(),
@@ -91,7 +94,7 @@ def main():
                 'govulncheck_version': 'v1.9.0', 'govulncheck_exit_code': result.returncode,
                 'govulncheck_amd64_exit_code': amd64_result.returncode,
                 'deployed': False}
-    (args.output / 'provenance.json').write_text(json.dumps(metadata, indent=2))
+    (args.output / 'provenance.json').write_text(json.dumps(metadata, indent=2)+'\n', encoding='utf-8', newline='\n')
     print(json.dumps(metadata), flush=True)
 
 

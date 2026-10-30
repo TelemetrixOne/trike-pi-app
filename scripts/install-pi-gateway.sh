@@ -501,26 +501,10 @@ configure_video() {
 
   PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${video_root}/mediamtx.yml" <<'PY'
 import sys, yaml
+from hpr_gateway.config import load_config
+from hpr_gateway.media_broker import render
 source, target = sys.argv[1], sys.argv[2]
-with open(source, encoding="utf-8") as handle:
-    cfg = yaml.safe_load(handle) or {}
-cameras = ((cfg.get("video") or {}).get("cameras") or {})
-paths = {
-    str(camera.get("path") or name): {"source": "publisher"}
-    for name, camera in cameras.items()
-    if isinstance(camera, dict) and camera.get("enabled")
-}
-payload = {
-    "logLevel": "info",
-    "logDestinations": ["stdout"],
-    "rtsp": True,
-    "rtspAddress": ":8554",
-    "rtmp": False,
-    "hls": False,
-    "webrtc": False,
-    "srt": False,
-    "paths": paths,
-}
+payload = render(load_config(source))
 with open(target, "w", encoding="utf-8") as handle:
     yaml.safe_dump(payload, handle, sort_keys=False)
 PY

@@ -27,6 +27,8 @@ network:
     enabled: false
     public_host: "CHANGE_ME"
     tailscale_host: "CHANGE_ME"
+    # Deployment-owned numeric IPs; empty defaults to the enrolled central host.
+    trusted_reader_hosts: []
     rtmp_port: 1935
     rtsp_port: 8554
     hls_port: 8888
