@@ -139,6 +139,8 @@ def main():
     manifest = json.loads((SOURCE / 'scripts/assessment-health-baseline.json').read_text())
     for name, expected in manifest['baseline'].items():
         target = ROOT / name
+        if expected is None and not target.exists():
+            continue
         if not target.is_file() or digest(target) != expected:
             raise RuntimeError('Unidentified live source: ' + name)
     for name in manifest['install']:
