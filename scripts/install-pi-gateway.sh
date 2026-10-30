@@ -457,6 +457,15 @@ configure_video() {
   if [ "$(cfg services.video.enabled --default false)" != "true" ]; then
     return 0
   fi
+  local ipc_source ipc_target
+  ipc_source="${REPO_ROOT}/systemd/hpr-video-compositor.service.d/90-private-shm.conf"
+  ipc_target="/etc/systemd/system/hpr-video-compositor.service.d/90-private-shm.conf"
+  if [ -e "${ipc_target}" ] && ! cmp -s "${ipc_source}" "${ipc_target}"; then
+    echo 'Existing private-IPC settings differ; preserve and review before installation.' >&2
+    return 1
+  fi
+  install -d "$(dirname "${ipc_target}")"
+  install -m 0644 "${ipc_source}" "${ipc_target}"
 
   local arch binary_source video_root expected_sha actual_sha
   arch="$(cfg video.mediamtx_arch --default linux_arm64)"

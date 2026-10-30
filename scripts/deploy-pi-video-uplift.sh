@@ -27,6 +27,12 @@ do
     exit 1
   fi
 done
+IPC_SOURCE="${REPO_ROOT}/systemd/hpr-video-compositor.service.d/90-private-shm.conf"
+IPC_TARGET="/etc/systemd/system/hpr-video-compositor.service.d/90-private-shm.conf"
+if [ ! -f "${IPC_SOURCE}" ] || { [ -e "${IPC_TARGET}" ] && ! cmp -s "${IPC_SOURCE}" "${IPC_TARGET}"; }; then
+  echo 'Missing canonical or unidentified existing private-IPC settings; preserve and inspect.' >&2
+  exit 1
+fi
 
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
@@ -62,6 +68,11 @@ if [ -e /etc/systemd/system/hpr-video-compositor.service ]; then
   install -D -m 0600 /etc/systemd/system/hpr-video-compositor.service \
     "${BACKUP_ROOT}/etc/systemd/system/hpr-video-compositor.service"
 fi
+if [ -e "${IPC_TARGET}" ]; then
+  install -D -m 0600 "${IPC_TARGET}" "${BACKUP_ROOT}/etc/systemd/system/hpr-video-compositor.service.d/90-private-shm.conf"
+fi
+install -d "$(dirname "${IPC_TARGET}")"
+install -m 0644 "${IPC_SOURCE}" "${IPC_TARGET}"
 
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-publish.sh" "${INSTALL_ROOT}/bin/hpr-video-publish.sh"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-publish.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-publish.sh"
