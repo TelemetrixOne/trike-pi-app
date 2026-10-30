@@ -69,8 +69,8 @@ fresh frames. TPMS selection is correct, but one selected sensor was offline.
 HDMI was disconnected; no physical HDMI/device test was performed.
 
 The following is the deployment/revalidation procedure; steps 1–5 were completed
-for the observer rollout. GPIO credential reload and environment activation are
-separate pending maintenance operations.
+for the observer rollout. Dependency activation was subsequently completed in the
+explicitly approved stationary maintenance window, as recorded below.
 
 1. Fetch GitHub main and repeat the read-only comparison of source, active process
    commands, units/drop-ins, `/opt/hpr`, YAML and pending config transactions.
@@ -96,6 +96,61 @@ separate pending maintenance operations.
    dependency and hardware compatibility checks before a coordinated maintenance
    window for activation; keep the old environment intact for rollback.
 
+## Isolated runtime activated
+
+The first candidate found a missing linker development library for PyPI lgpio.
+No OS packages or active environment were altered. The corrected builder links
+only OS-owned lgpio, its distribution metadata, `_lgpio` and gps before resolving
+the pinned Python dependencies; it records native package versions and hashes.
+No other system site packages are inherited. Failed/stopped candidates were
+preserved for diagnosis.
+
+Candidate `/opt/hpr/candidates/runtime-2ee99a1` passed `pip check`, exact runtime
+version checks, import checks and all 195 tests on the Pi. Tests ran with private
+devices/network, read-only system/kernel settings and GPIO mock factory; they
+could not access the trike's hardware. Initial test packaging omitted the vendor
+checksum fixture; adding a read-only link to the unchanged binary resolved that
+fixture error, after which the complete run passed.
+
+After direct human approval that the trike was stationary, repository activation
+script from `fab83f4` moved the original environment into
+`/opt/hpr/backups/isolated-runtime-20261030T033539Z/venv` and switched
+`/opt/hpr/gateway/venv` to the validated candidate. All 15 active gateway Python
+workers were restarted; GPIO restarted once. GPIO source plus the credential
+reload helper were installed. No actuator commands or credential changes were
+sent. Native video and MediaMTX PIDs remained 636 and 596; no video restart or
+camera setting change occurred. All gateway Python workers now use the isolated
+environment. The native video path continues to use system Python intentionally.
+
+Passive before/after reported states matched: headlight AUTO/ON, auxiliary lights
+OFF, horn OFF, DRS RIDER_CONTROL/OPEN. The GPIO process has its SIGHUP handler
+installed; no signal/credential change was needed to establish that. GPIO pin
+readbacks were Good (four outputs/four inputs), GPS had a fresh 3D fix/Good,
+both Bluetooth adapters were UP/RUNNING with zero controller errors, all camera
+workers had fresh frames and all seven central section hashes remained applied.
+YAML and local camera files were unchanged. No HPR runtime warning/error entries
+were found after activation during the validation interval; the rolling system
+count still includes earlier diagnostics/test output until it ages out.
+
+Physical actuator motion, rider handover and connected HDMI appearance/latency
+were not tested by this maintenance operation.
+
+## Advisory and attribution gates
+
+The reproducible advisory query covered 112 declared Python/Go components.
+OSV returned no matches for the pinned Python versions at query time, but
+returned 38 advisory IDs (including aliases) for six declared Go components:
+go-git/v5, webtransport-go, x/crypto, x/net, x/text and Go standard library.
+The query is a version match, not proof of runtime exploitability or clearance.
+OS/native media packages and dependency reachability require separate review.
+The unchanged MediaMTX binary is not declared security-cleared by this work.
+See `scripts/audit-pinned-components.py` and the official OSV API linked there.
+The web coordinator has been informed and is keeping F22/F23 open.
+
+The binary inventory and 109 collected module notice files cover 83 of 85 named
+Go modules; two notice gaps and complete licence compatibility review remain.
+Repository visibility and history were not changed.
+
 ## Credential migration is separate and coordinated
 
 The web-platform owner is coordinating revocation of exposed shared credentials.
@@ -103,14 +158,18 @@ Do not rotate the Pi independently. Existing MQTT clients retain their original
 credentials on reconnect. This source adds a tested credential-only GPIO
 reconnect: SIGHUP wakes a network worker while controller/output objects remain
 alive; it refuses changes to broker, identity or GPIO settings. Installing that
-capability into the old running process first requires one coordinated stationary
-GPIO restart. Future credential reloads use `systemctl kill --kill-whom=main
+capability was activated with the approved one-time stationary GPIO restart.
+Future credential reloads use `systemctl kill --kill-whom=main
 --signal=HUP hpr-gpio-control.service` after atomic config staging. Other clients
 still require their own credential reload/restart. Central confirmed the full
 profile does not carry deployment broker credentials. Use a private handover
 file, temporary dual-valid accounts, per-trike ACLs and a verified key-first SSH
 transition preserving Tailscale. No secret values belong in commits or reports.
 
-Pending release work includes GPIO credential-reload activation, isolated-environment
-activation, coordinated credential migration and complete transitive binary
+The human deferred phone re-pairing, so old/shared credentials remain valid and
+no independent credential revocation was performed. The web coordinator owns
+per-device account/ACL provisioning and the eventual coordinated cutover.
+
+Pending release work includes coordinated credential migration, remaining media
+security-boundary remediation and complete transitive binary
 licence/advisory review. This document does not mark those tasks complete.
