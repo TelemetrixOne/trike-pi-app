@@ -6,3 +6,4 @@ colorzero==2.0
 bleak==0.22.3
 dbus-fast==2.44.1; sys_platform == 'linux'
 typing_extensions==4.13.2
+setuptools==84.2.1

@@ -15,7 +15,7 @@
   retries use a persisted three-attempt/ten-minute budget and bounded backoff.
 - A canonical, unprivileged health observer preserves native MQTT state fields
   but never restarts services. Systemd and dedicated recovery services own that.
-  It must replace the separate legacy observer through a guarded migration.
+  It replaces the separate legacy observer through a guarded migration.
 - Demo requests require a UUID, schema version, issue time and expiry of at most
   five seconds. A durable private replay journal consumes accepted identities
   before queuing. The per-sequence sender does not reconnect and replay commands.
@@ -35,17 +35,48 @@
 
 ## Deployment status and required sequence
 
-The previous read-only comparison found all deployed gateway modules matching
-`cf1bf7297b56c5b4cc9f7aa1a04809c715a7540d`, with an identified separate legacy
-health agent and inherited Python environment. A later fresh SSH attempt timed
-out. **This remediation is source-only until a fresh live comparison and guarded
-deployment succeed.** No claim of live alignment follows from the test results.
+The fresh comparison found 33 deployed gateway modules matching
+`cf1bf7297b56c5b4cc9f7aa1a04809c715a7540d`; the migration-only AST helper was
+correctly absent. After a temporary SSH outage, the guarded rollout from
+`0e4db31` succeeded. Backup: `/opt/hpr/backups/assessment-health-20261030T000932Z`.
+An earlier validation subprocess import-path failure caused a clean automatic
+rollback; the path was corrected and pushed before the successful retry.
+
+Restarted: `hpr-services-health`, `hpr-gps-recovery`, `hpr-demo-show`,
+`hpr-heartbeat`, `hpr-trike-config-sync`. Retired/fenced
+`hpr-trike1-health-agent`; started unprivileged `hpr-health-agent`, preserving
+ON mode, thresholds and monitored unit list. GPIO/DRS, video/MediaMTX, GPS
+publisher, HRM, TPMS, pedals and derailleur PIDs were unchanged. No actuator
+commands, demo requests or reboot were issued.
+
+All seven passive deployment checks passed: fresh accurate log telemetry,
+current TPMS assignments, camera frame progress, canonical observer ownership,
+demo listener readiness, fresh GPS observer state and full config hash.
+The central profile hash remained
+`ce1f3073f4db7a710ae3fef5780d09e54592ef14257472b15efa287b816b51dd`.
+Raw YAML SHA after metadata migration:
+`1a6a8581ce7cde0414450079f950404db734582c8932030ce7fd4420e3d8b542`.
+
+Subsequent log analysis found the Bluetooth recovery monitor still held an old
+config class in memory and rejected the removed legacy endpoint every ten
+seconds. Repository helper `reload-pi-stale-config-reader.py` from `23c2c1e`
+verified source/adapters, restarted only that monitor, and verified 22 seconds
+without new stale-loader errors; all protected PIDs and both adapter states were
+unchanged. Backup: `/opt/hpr/backups/stale-reader-reload-20261030T031336Z`.
+The old errors remain in the honest rolling 30-minute count until expiry.
+GPS subsequently reported fresh valid fixes; native camera workers all reported
+fresh frames. TPMS selection is correct, but one selected sensor was offline.
+HDMI was disconnected; no physical HDMI/device test was performed.
+
+The following is the deployment/revalidation procedure; steps 1–5 were completed
+for the observer rollout. GPIO credential reload and environment activation are
+separate pending maintenance operations.
 
 1. Fetch GitHub main and repeat the read-only comparison of source, active process
    commands, units/drop-ins, `/opt/hpr`, YAML and pending config transactions.
    Preserve every unidentified difference before proceeding.
-2. Prepare a repository deployment script with expected-source hashes, protected
-   backups, a manifest, rollback and passive validation. Do not run the general
+2. Use `scripts/deploy-pi-assessment-health.py` with its expected-source hashes,
+   protected backups, manifest, rollback and passive validation. Do not run the general
    installer/rebuild on the racing Pi as a shortcut.
 3. Replace only service-health, GPS-recovery, heartbeat and demo runtime source,
    the shared MQTT helper and new modules/CLI. Install observer state directories,
@@ -80,6 +111,6 @@ profile does not carry deployment broker credentials. Use a private handover
 file, temporary dual-valid accounts, per-trike ACLs and a verified key-first SSH
 transition preserving Tailscale. No secret values belong in commits or reports.
 
-Pending release work includes guarded live rollout, isolated-environment
+Pending release work includes GPIO credential-reload activation, isolated-environment
 activation, coordinated credential migration and complete transitive binary
 licence/advisory review. This document does not mark those tasks complete.

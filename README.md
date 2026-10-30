@@ -21,30 +21,40 @@ Do not create trike-specific application paths such as `/opt/hpr/trike1`. The tr
 
 ## Deploy Shape
 
-1. Edit `hpr-standalone-docker/config/hpr-race.yaml` on the build machine.
-2. Run the central renderer and package the full-platform archive.
-3. Extract that archive on the Pi.
-4. Run `sudo env HPR_CONFIRM_REBUILD=YES scripts/rebuild-pi-gateway.sh`.
-5. Run `sudo scripts/validate-pi-gateway.sh` after all USB hardware is connected.
-6. Reboot only after validation and explicit operator approval.
+Use GitHub main of `TelemetrixOne/trike-pi-app` as the source. Before updating
+an existing Pi, compare its files, YAML, units and process commands read-only and
+preserve unexpected enhancements. Use the relevant guarded repository deployment
+script, committing and pushing approved source before deployment. The general
+installer refuses a nonempty installation target.
 
-The rebuild script disables known legacy publishers, preserves the previous
-`/opt/hpr` tree and unit/config files under `/var/backups`, installs the rendered
-`trike1` config, starts the clean services, and validates the result. It does
-not reboot the Pi.
+For a fresh Pi, enrol its identity, deployment credentials and hardware roles in
+`/etc/hpr/hpr.yaml` before running `sudo scripts/install-pi-gateway.sh` from a
+canonical checkout. The example has placeholder credentials and hardware services
+disabled. Central Race Configuration supplies supported runtime hardware settings
+through configuration synchronisation; do not copy another trike's configuration.
 
-For an existing Pi that still uses legacy units for non-GPS hardware, apply the
-GPS publisher and gpsd recovery uplift without replacing those other unit files:
+A full rebuild is a separate, explicitly stationary maintenance operation:
 
 ```bash
-sudo HPR_INSTALL_SCOPE=gps scripts/install-pi-gateway.sh
+sudo env HPR_CONFIRM_REBUILD=YES HPR_STATIONARY_APPROVED=YES \
+  HPR_CONFIG_SOURCE=/path/to/verified-enrolled-pi.yaml scripts/rebuild-pi-gateway.sh
 ```
 
+Run `sudo scripts/validate-pi-gateway.sh` after the relevant hardware is connected.
+Reboot only with explicit operator approval.
+
+The rebuild script disables known legacy publishers, preserves the previous
+`/opt/hpr` tree and unit/config files under `/var/backups`, installs the explicitly
+supplied enrolled config, starts the clean services, and validates the result. It does
+not reboot the Pi.
+
 The default scope remains `all` for a fresh full-gateway installation.
-The GPS maintenance scope installs only the MQTT and YAML Python dependencies
+The optional fresh-install `HPR_INSTALL_SCOPE=gps` installs only MQTT and YAML dependencies
 required by the publisher. The gpsd client binding comes from the maintained
-operating-system `python3-gps` package and is exposed to the gateway virtual
-environment with `--system-site-packages`.
+operating-system `python3-gps` package. Only that audited binding is linked into
+the isolated environment; full installs also link only OS-owned `lgpio` bindings.
+Native package versions and binding hashes are recorded for review. Unrelated
+system packages are not inherited.
 
 The full-platform bundle also includes `scripts/deploy-pi-gps-uplift.sh` for a
 backed-up GPS-only update of a live legacy Pi. Pass the full-platform archive

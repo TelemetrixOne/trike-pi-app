@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build/check a new isolated candidate; never switch services or active venv."""
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -26,19 +27,30 @@ def main():
     python = target / 'bin/python'
     requirements = Path(__file__).resolve().parents[1] / ('requirements.gps.txt' if args.scope == 'gps' else 'requirements.txt')
     subprocess.run([str(python), '-m', 'pip', 'install', '--prefer-binary', '-r', str(requirements)], check=True)
-    if args.gps_binding:
+    native = {}
+    modules = [('lgpio', 'python3-lgpio'), ('_lgpio', 'python3-lgpio')] if args.scope == 'all' else []
+    if args.gps_binding: modules.append(('gps', 'python3-gps'))
+    site = Path(subprocess.check_output([str(python), '-c', 'import site;print(site.getsitepackages()[0])'], text=True).strip())
+    for module, package in modules:
         source = Path(subprocess.check_output([sys.executable, '-c',
-            "import gps,pathlib;print(pathlib.Path(gps.__file__).parent)"], text=True).strip()).resolve()
-        if source.name != 'gps' or not source.is_relative_to('/usr/lib'):
-            raise RuntimeError('GPS binding is not the audited OS package')
-        site = Path(subprocess.check_output([str(python), '-c', 'import site;print(site.getsitepackages()[0])'], text=True).strip())
-        (site / 'gps').symlink_to(source, target_is_directory=True)
+            'import importlib.util;print(importlib.util.find_spec(' + repr(module) + ').origin)'], text=True).strip()).resolve()
+        if not source.is_relative_to('/usr/lib'):
+            raise RuntimeError('Native binding is not under the audited OS namespace')
+        owner = subprocess.check_output(['dpkg-query', '-S', str(source)], text=True).strip().split(': ', 1)[0]
+        if owner.split(':')[0] != package:
+            raise RuntimeError('Native binding has unexpected package ownership')
+        version = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', owner], text=True).strip()
+        target_source = source.parent if module == 'gps' else source
+        (site / ('gps' if module == 'gps' else source.name)).symlink_to(target_source, target_is_directory=target_source.is_dir())
+        native[module] = {'source': str(source), 'package': owner, 'version': version,
+                          'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}
     subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
-    modules = 'import paho.mqtt.client,yaml' + (',bleak,gpiozero,adafruit_ads1x15.ads1115' if args.scope == 'all' else '')
-    if args.gps_binding: modules += ',gps'
-    subprocess.run([str(python), '-I', '-c', modules], check=True)
+    imports = 'import paho.mqtt.client,yaml' + (',bleak,gpiozero,lgpio,adafruit_ads1x15.ads1115' if args.scope == 'all' else '')
+    if args.gps_binding: imports += ',gps'
+    subprocess.run([str(python), '-I', '-c', imports], check=True)
+    (target / 'native-bindings.json').write_text(json.dumps(native, indent=2))
     print(json.dumps({'candidate': str(target), 'isolated': True, 'activated': False,
-                      'validation': 'pip_check_and_import_only_no_gpio_access'}))
+                      'native_bindings': native, 'validation': 'pip_check_and_import_only_no_gpio_access'}))
 
 
 if __name__ == '__main__': main()

@@ -113,10 +113,12 @@ Create and verify a full root/boot backup first. Extract the full-platform
 archive on the Pi, then run from its repository root:
 
 ```bash
-sudo env HPR_CONFIRM_REBUILD=YES scripts/rebuild-pi-gateway.sh
+sudo env HPR_CONFIRM_REBUILD=YES HPR_STATIONARY_APPROVED=YES \
+  HPR_CONFIG_SOURCE=/path/to/verified-enrolled-pi.yaml scripts/rebuild-pi-gateway.sh
 ```
 
-The script uses the rendered `trike1` config by default. It stops and disables
+The script requires an explicitly supplied enrolled config and a checkout outside
+`/opt/hpr`; it does not default to a trike identity. It stops and disables
 known legacy publishers so two processes cannot compete for BLE or publish the
 same MQTT topics. The old `/opt/hpr` tree and copies of HPR systemd/config files
 are retained in a timestamped `/var/backups/hpr-pre-rebuild-*` directory. The

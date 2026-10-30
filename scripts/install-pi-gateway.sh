@@ -151,7 +151,7 @@ if command -v apt-get >/dev/null 2>&1; then
   apt-get install -y rsync mosquitto-clients
   if [ "${INSTALL_SCOPE}" = "all" ]; then
     apt-get install -y \
-      bluez bluetooth rfkill ffmpeg v4l-utils i2c-tools python3-smbus \
+      bluez bluetooth rfkill ffmpeg v4l-utils i2c-tools python3-smbus python3-lgpio \
       build-essential python3-dev swig python3-gi gir1.2-gstreamer-1.0 \
       gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
       gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-rtsp

@@ -14,6 +14,16 @@ Dependency manifests identify Python runtime versions separately; their
 distribution metadata/licences remain authoritative. Installing system packages
 does not make those components original project code.
 
+`vendor/mediamtx/build-components.json` records all 85 modules named by the
+binary's embedded Go build information, the binary SHA256 and build settings.
+`vendor/mediamtx/module-notices/index.json` maps preserved upstream notice files
+to exact module versions and source archive hashes. The collector obtained 109
+notice files from 83 modules. `github.com/benburkert/openpgp` has no recognised
+notice file in that module archive; `github.com/cloudflare/circl` exceeded the
+bounded collector limit. Both require further review. Collection does not prove
+licence compatibility or full binary attribution. The Go toolchain BSD notice
+is preserved in `vendor/mediamtx/GO-LICENSE` from its exact tagged source.
+
 Before any public binary distribution, produce and review a complete transitive
 licence/SBOM bundle for the embedded MediaMTX dependencies and OS/native media
 stack, plus the Python lock. This inventory is not that complete bundle and does
