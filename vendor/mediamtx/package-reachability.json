@@ -1,0 +1,14 @@
+{
+  "arm64": {
+    "benburkert_packages": [
+      "github.com/benburkert/openpgp/aes/keywrap"
+    ],
+    "unsafe_xcrypto_openpgp_packages": []
+  },
+  "amd64": {
+    "benburkert_packages": [
+      "github.com/benburkert/openpgp/aes/keywrap"
+    ],
+    "unsafe_xcrypto_openpgp_packages": []
+  }
+}

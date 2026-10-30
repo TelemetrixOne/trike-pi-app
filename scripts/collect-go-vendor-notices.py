@@ -18,7 +18,7 @@ def escape(value):
     return ''.join('!' + c.lower() if c.isupper() else c for c in value)
 
 
-def collect(component, output):
+def collect(component, output, rules):
     identity = component['name'] + '@' + component['version']
     folder = hashlib.sha256(identity.encode()).hexdigest()[:16]
     result = {'module': component['name'], 'version': component['version'], 'files': []}
@@ -49,6 +49,23 @@ def collect(component, output):
                 target.write_bytes(notice)
                 result['files'].append({'upstream_path': relative, 'saved_path': folder + '/' + name,
                                         'sha256': hashlib.sha256(notice).hexdigest()})
+            rule = rules.get(component['name'])
+            if not result['files'] and rule and rule['version'] == component['version']:
+                code = archive.read(prefix + rule['source_file'])
+                header = []
+                for line in code.decode('utf-8').splitlines():
+                    if line.startswith('//') or not line.strip(): header.append(line)
+                    else: break
+                notice = ('\n'.join(header).rstrip()+'\n').encode('utf-8')
+                if hashlib.sha256(notice).hexdigest() != rule['header_sha256']:
+                    raise ValueError('Compiled-package licence header changed; review required')
+                name = 'COMPILED-PACKAGE-LICENSE.txt'
+                target = output / folder / name; target.parent.mkdir(exist_ok=True); target.write_bytes(notice)
+                result['files'].append({'upstream_path': rule['source_file'] + ' (complete licence header)',
+                    'saved_path': folder+'/'+name, 'sha256': hashlib.sha256(notice).hexdigest(),
+                    'source_file_sha256': hashlib.sha256(code).hexdigest(),
+                    'scope': 'Only compiled packages: ' + ', '.join(rule['compiled_packages'])})
+                result['compiled_package_scope'] = rule['compiled_packages']
         result['status'] = 'collected_requires_review' if result['files'] else 'missing_notice_requires_review'
     except Exception as exc:
         result['status'] = 'failed_requires_review'
@@ -64,13 +81,15 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     inventory = json.loads((args.inventory or root / 'vendor/mediamtx/build-components.json').read_text())
+    rules_path = root / 'vendor/mediamtx/package-notice-rules.json'
+    rules = json.loads(rules_path.read_text()) if rules_path.exists() else {}
     if hashlib.sha256((args.binary or root / inventory['artifact']).read_bytes()).hexdigest() != inventory['sha256']:
         raise RuntimeError('Binary changed; regenerate and review build inventory first')
     if args.output.exists():
         raise RuntimeError('Output must not exist; never replace unidentified notice files')
     args.output.mkdir(parents=True)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        records = list(pool.map(lambda component: collect(component, args.output), inventory['dependencies']))
+        records = list(pool.map(lambda component: collect(component, args.output, rules), inventory['dependencies']))
     report = {'scope': 'Module source notices; no executable source extracted. Review required for binary redistribution.',
               'binary_sha256': inventory['sha256'], 'modules': records}
     (args.output / 'index.json').write_text(json.dumps(report, indent=2) + '\n')

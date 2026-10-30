@@ -28,16 +28,19 @@ func main() {
 	count := flag.Int("packets", 120, "number of synthetic RTP packets")
 	deniedIP := flag.String("denied-source", "127.0.0.2", "loopback source to verify ACL denial")
 	fixture := flag.String("h264-fixture", "", "one software-generated H264 IDR frame")
+	readOnlyIP := flag.String("read-only-source", "", "optional synthetic trusted read-only peer")
 	flag.Parse()
 	if *count < 30 || *count > 600 {
 		panic("packet count outside bounded test")
 	}
 	u, err := base.ParseURL(*address)
 	must(err)
-	host, _, err := net.SplitHostPort(u.Host)
+	host, port, err := net.SplitHostPort(u.Host)
 	must(err)
-	if !net.ParseIP(host).IsLoopback() {
-		panic("probe requires an isolated loopback listener")
+	number, err := strconv.Atoi(port)
+	must(err)
+	if !net.ParseIP(host).IsLoopback() || number < 18000 || number > 18999 {
+		panic("probe requires an isolated loopback listener in ports 18000..18999")
 	}
 	tcp := gortsplib.ProtocolTCP
 	makeClient := func(source string) *gortsplib.Client {
@@ -90,6 +93,22 @@ func main() {
 	readDenied := authDenied(err)
 	if !publishDenied || !readDenied {
 		panic(fmt.Sprintf("ACL denial evidence missing: publish=%v read=%v", publishError, err))
+	}
+	readOnlyAllowed, readOnlyPublishDenied := false, false
+	if *readOnlyIP != "" {
+		peer := makeClient(*readOnlyIP)
+		must(peer.Start())
+		_, _, err = peer.Describe(u)
+		peer.Close()
+		must(err)
+		readOnlyAllowed = true
+		peer = makeClient(*readOnlyIP)
+		err = peer.StartRecording(*address, session)
+		peer.Close()
+		readOnlyPublishDenied = authDenied(err)
+		if !readOnlyPublishDenied {
+			panic(fmt.Sprintf("trusted read-only peer could publish: %v", err))
+		}
 	}
 	reader := makeClient("")
 	must(reader.Start())
@@ -156,7 +175,7 @@ func main() {
 		panic(fmt.Sprintf("relay failed received=%d corrupt=%d", len(delays), corrupt))
 	}
 	p95 := delays[(len(delays)-1)*95/100]
-	json.NewEncoder(os.Stdout).Encode(map[string]any{"scope": "synthetic_loopback_RTSP_relay_not_glass_to_glass_camera_latency", "sent": *count, "received": len(delays), "timestamp_corruption": corrupt, "p50_ms": delays[len(delays)/2], "p95_ms": p95, "max_ms": delays[len(delays)-1], "untrusted_publish_denied": publishDenied, "untrusted_read_denied": readDenied})
+	json.NewEncoder(os.Stdout).Encode(map[string]any{"scope": "synthetic_loopback_RTSP_relay_not_glass_to_glass_camera_latency", "sent": *count, "received": len(delays), "timestamp_corruption": corrupt, "p50_ms": delays[len(delays)/2], "p95_ms": p95, "max_ms": delays[len(delays)-1], "untrusted_publish_denied": publishDenied, "untrusted_read_denied": readDenied, "trusted_reader_read_allowed": readOnlyAllowed, "trusted_reader_publish_denied": readOnlyPublishDenied})
 	if p95 > 100 {
 		panic("relay p95 exceeds conservative 100ms acceptance ceiling")
 	}

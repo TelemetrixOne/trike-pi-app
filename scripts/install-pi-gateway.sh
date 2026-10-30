@@ -599,7 +599,8 @@ EOF
 [Unit]
 Description=HPR front HDMI viewer and independent camera publishers
 After=hpr-video-mediamtx.service hpr-video-console.service
-Requires=hpr-video-mediamtx.service hpr-video-console.service
+Requires=hpr-video-console.service
+Wants=hpr-video-mediamtx.service
 StartLimitIntervalSec=0
 
 [Service]

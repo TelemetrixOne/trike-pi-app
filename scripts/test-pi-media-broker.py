@@ -59,6 +59,8 @@ def main():
                           'ips': ['127.0.0.1/32', '::1/128'], 'permissions': [
                               {'action': action, 'path': path} for action in ('publish','read') for path in ('front','rear')]}],
                       'paths': {path: {'source': 'publisher'} for path in ('front','rear')}}
+            config['authInternalUsers'].append({'user':'any','pass':'','ips':['127.0.0.3/32'],
+                'permissions':[{'action':'read','path':path} for path in ('front','rear')]})
             file = stage / (label + '.yaml')
             file.write_text(yaml.safe_dump(config, sort_keys=False)); os.chmod(file, 0o644)
             unit = 'hpr-media-isolation-' + label + '-' + str(os.getpid())
@@ -80,7 +82,7 @@ def main():
             results[label] = {}
             for path in ('front', 'rear'):
                 try:
-                    output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', '--h264-fixture', str(fixture), timeout=25)
+                    output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', '--h264-fixture', str(fixture), '--read-only-source', '127.0.0.3', timeout=30)
                 except subprocess.CalledProcessError as exc:
                     (stage / (label + '-' + path + '-failure.txt')).write_text(exc.output)
                     print(exc.output, flush=True)

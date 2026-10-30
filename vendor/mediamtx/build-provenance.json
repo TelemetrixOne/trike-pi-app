@@ -1,0 +1,18 @@
+{
+  "source_commit": "9540cb6c1d9f1e9351fcc4ded3afc249ffff22bc",
+  "source_archive_sha256": "48e9cef4b82b532b70ae1965549c22b4c3692501d841c7e88e17113205f0376c",
+  "upstream_tag": "v1.21.3",
+  "version_label": "v1.21.3-tm1.1",
+  "toolchain": "go1.27.3",
+  "patch": "golang.org/x/net v0.62.0",
+  "updater_patch_sha256": "da9cf3c11493fcb48903b7ed732fb1f7563faa2a2b39382ca0d56a8b1a7eccf5",
+  "feature_profile": "Git-managed updater; upstream CSI stub; USB capture remains external",
+  "go_mod_sha256": "15a84ee9a3cf31a375983f9d1249e95743a6545932faf484c494fcc89bc679f7",
+  "go_sum_sha256": "89c1d7be5f092a9e077b2c314bba95e25eb955ca9cbc3b6f0ffcafa22555032d",
+  "binary_sha256": "ee2c5ab2f61c3fd70173f8a959fe603a7bdff2b3451a379aed44a5a8ca298709",
+  "amd64_sha256": "969907d0bd2a38cd43c8a8ce0a114e9d8c6405ef5c87533a569424a957090327",
+  "govulncheck_version": "v1.9.0",
+  "govulncheck_exit_code": 0,
+  "govulncheck_amd64_exit_code": 0,
+  "deployed": false
+}

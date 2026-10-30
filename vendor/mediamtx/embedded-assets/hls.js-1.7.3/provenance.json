@@ -1,0 +1,7 @@
+{
+  "version": "v1.7.3",
+  "licence": "Apache-2.0; embedded regenerator/Babel runtime notices also preserved",
+  "upstream_licence": "https://github.com/video-dev/hls.js/blob/v1.7.3/LICENSE",
+  "release_zip_sha256": "abbda85f3e9b8325fc6b8dbf4fa612ea87144ebad93c2150594e64aad58ec529",
+  "embedded_asset_sha256": "a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e"
+}

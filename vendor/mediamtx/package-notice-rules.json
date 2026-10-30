@@ -1,0 +1,11 @@
+{
+  "github.com/benburkert/openpgp": {
+    "version": "v0.0.0-20160410205803-c2471f86866c",
+    "source_file": "aes/keywrap/keywrap.go",
+    "header_sha256": "b08997bd0c0fa262937c9032e8c5ae479cd95cf7e0cda69b87f765a39bb6e0d0",
+    "compiled_packages": [
+      "github.com/benburkert/openpgp/aes/keywrap"
+    ],
+    "evidence": "go list -deps on linux/arm64 and linux/amd64; other OpenPGP packages are not linked"
+  }
+}
