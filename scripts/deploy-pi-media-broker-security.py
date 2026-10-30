@@ -91,6 +91,7 @@ def main():
     binary = SOURCE / 'vendor/mediamtx/linux_arm64/mediamtx'
     if digest(binary) != metadata['binary_sha256'] or metadata['govulncheck_exit_code'] != 0:
         raise RuntimeError('Audited candidate provenance mismatch')
+    os.chmod(binary, 0o755)
     config = load_config(str(CONFIG)); data = copy.deepcopy(config.data)
     prior_readers = data['network']['mediamtx'].get('trusted_reader_hosts')
     if prior_readers and prior_readers != args.trusted_reader: raise RuntimeError('Existing reader policy differs')
