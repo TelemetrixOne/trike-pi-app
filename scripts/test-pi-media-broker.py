@@ -73,7 +73,12 @@ def main():
                 time.sleep(.1)
             results[label] = {}
             for path in ('front', 'rear'):
-                output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', timeout=25)
+                try:
+                    output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', timeout=25)
+                except subprocess.CalledProcessError as exc:
+                    (stage / (label + '-' + path + '-failure.txt')).write_text(exc.output)
+                    print(exc.output, flush=True)
+                    raise
                 value = json.loads(output.splitlines()[-1])
                 results[label][path] = value
                 print(json.dumps({label: {path: value}}), flush=True)
