@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 import logging
 import queue
 import signal
+import sqlite3
 import time
 import uuid
 
 from ..config import config_arg_parser, load_config
 from ..mqtt import make_client
+from ..demo_protocol import DemoJournal, envelope, request_identity
+from ..drs_protocol import DRSClock as SynchronizedClock
 
 
 LOG = logging.getLogger(__name__)
@@ -72,16 +76,7 @@ def eligible(states: dict[str, str]) -> bool:
 
 
 def parse_request(raw: bytes, retained: bool) -> str:
-    if retained:
-        raise ValueError("retained requests are not accepted")
-    try:
-        message = json.loads(raw)
-        if message.get("action") != "START" or set(message) != {"action", "request_id"}:
-            raise ValueError("expected action START and request_id")
-        request_id = str(uuid.UUID(message["request_id"]))
-    except (TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
-        raise ValueError("invalid demo request") from exc
-    return request_id
+    return envelope(raw, retained)['request_id']
 
 
 class DemoShow:
@@ -91,11 +86,14 @@ class DemoShow:
         self.request_topic = f"{self.prefix}/control/demo/request"
         self.status_topic = f"{self.prefix}/control/demo/status"
         self.client = make_client(config, f"hpr-{config.trike_id}-demo-show")
+        self.client.max_queued_messages_set(4)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.states: dict[str, str] = {}
-        self.requests: queue.Queue[str] = queue.Queue(maxsize=1)
-        self.seen: set[str] = set()
+        self.requests = queue.Queue(maxsize=1)
+        self.journal = DemoJournal(config.get('services.demo_show.replay_db',
+            os.path.join(os.getenv('STATE_DIRECTORY', '/var/lib/hpr-demo-show'), 'replay.sqlite3')))
+        self.clock = SynchronizedClock()
         self.stopping = False
         self.running = False
 
@@ -121,20 +119,19 @@ class DemoShow:
     def on_message(self, _client, _userdata, message):
         if message.topic == self.request_topic:
             try:
-                request_id = parse_request(message.payload, bool(message.retain))
-            except ValueError as exc:
-                self.status("rejected", reason=str(exc))
+                request = envelope(message.payload, bool(message.retain), self.clock.ready)
+                request_id = request['request_id']
+                if not self.journal.claim(request_id):
+                    self.status('rejected', request_id, 'duplicate request identity')
+                    return
+            except (ValueError, OSError, sqlite3.Error) as exc:
+                self.status('rejected', request_identity(message.payload), str(exc))
                 return
-            if request_id in self.seen:
-                return
-            self.seen.add(request_id)
-            if len(self.seen) > 128:
-                self.seen = {request_id}
             if self.running:
                 self.status("rejected", request_id, "demo already running")
                 return
             try:
-                self.requests.put_nowait(request_id)
+                self.requests.put_nowait(request)
             except queue.Full:
                 self.status("rejected", request_id, "demo already queued or running")
             return
@@ -145,7 +142,7 @@ class DemoShow:
             self.states[key] = message.payload.decode(errors="replace").strip().upper()
 
     def send(self, name: str, value: str):
-        result = self.client.publish(f"{self.prefix}/control/{name}/set", value, qos=1, retain=False)
+        result = self.sender.publish(f"{self.prefix}/control/{name}/set", value, qos=1, retain=False)
         result.wait_for_publish(timeout=1)
         if not result.is_published():
             raise RuntimeError(f"{name} command was not published")
@@ -174,13 +171,16 @@ class DemoShow:
         }[name]
         self.wait_state(key, expected)
 
-    def play(self, request_id: str):
+    def play(self, request_id: str, expires_at=None):
         # Wait briefly for GPIO's retained state so we can restore it later.
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not eligible(self.states):
             time.sleep(0.05)
         if not eligible(self.states):
             self.status("rejected", request_id, "complete GPIO state required; horn must be idle")
+            return
+        if expires_at is not None and (not self.clock.ready or time.time() >= expires_at):
+            self.status('rejected', request_id, 'request expired while waiting for controller state')
             return
         original_mode = self.states["headlight/mode"]
         original_headlight_request = self.states["headlight/requested_state"]
@@ -241,22 +241,35 @@ class DemoShow:
             self.status("failed" if failure else "completed", request_id, failure)
 
     def run(self) -> int:
+        self.clock.start()
         self.client.connect(self.config.mqtt.host, self.config.mqtt.port, keepalive=30)
         self.client.loop_start()
         try:
             while not self.stopping:
                 try:
-                    request_id = self.requests.get(timeout=0.2)
+                    request = self.requests.get(timeout=0.2)
                 except queue.Empty:
                     continue
                 self.running = True
+                self.sender = make_client(self.config, f'hpr-{self.config.trike_id}-demo-send-{uuid.uuid4().hex[:8]}',
+                                          reconnect_on_failure=False)
+                self.sender.max_queued_messages_set(1)
                 try:
-                    self.play(request_id)
+                    if not self.clock.ready or time.time() >= request['expires_at']:
+                        self.status('rejected', request['request_id'], 'queued request expired')
+                        continue
+                    self.sender.connect(self.config.mqtt.host, self.config.mqtt.port, keepalive=30)
+                    self.sender.loop_start()
+                    self.play(request['request_id'], request['expires_at'])
+                except Exception as exc:
+                    self.status('failed', request['request_id'], type(exc).__name__)
                 finally:
+                    self.sender.disconnect(); self.sender.loop_stop()
                     self.running = False
         finally:
-            self.client.loop_stop()
+            self.clock.stop()
             self.client.disconnect()
+            self.client.loop_stop()
         return 0
 
 

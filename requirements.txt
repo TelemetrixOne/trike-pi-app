@@ -1,5 +1,2 @@
-bleak>=0.22
-adafruit-circuitpython-ads1x15>=3.0
-gpiozero>=2.0
-paho-mqtt>=1.6
-PyYAML>=6.0
+# Tested Linux ARM64 runtime closure. OS gps bindings are bridged explicitly.
+-r requirements.lock

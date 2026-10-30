@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import signal
 import socket
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,9 +33,19 @@ class RecoveryPolicy:
     waiting_until: float | None = None
     state: str = "acquiring"
     startup_grace: float = BOOT_GRACE_SECONDS
+    last_healthy_tpv: float | None = None
+    nofix_attempted: bool = False
+    attempts: list[float] = field(default_factory=list)
+    attempt_limit: int = 3
+    attempt_window: float = 600
+    max_cooldown: float = 300
+    consecutive_attempts: int = 0
 
     def observe(self, report: dict, now: float, wall: datetime) -> None:
+        if report.get('class') == 'TPV' and report.get('mode') == 1:
+            self.last_healthy_tpv = now
         if report.get("class") == "TPV" and valid_position(report, wall, 5):
+            self.last_healthy_tpv = now
             # Repeated old TPVs cannot extend the last-fix clock.
             age = max(0.0, (wall - parse_gps_time(report["time"])).total_seconds())
             observed_fix = now - age
@@ -42,22 +54,42 @@ class RecoveryPolicy:
                 return
             self.waiting_until = None
             self.state = "healthy"
+            self.nofix_attempted = False
+            self.consecutive_attempts = 0
+
+    def receiver_active(self, now):
+        return self.last_healthy_tpv is not None and 0 <= now - self.last_healthy_tpv <= LOSS_SECONDS
+
+    def cooldown(self):
+        return min(self.max_cooldown, COOLDOWN_SECONDS * 2 ** min(4, max(0, self.consecutive_attempts - 1)))
 
     def tick(self, now: float) -> bool:
         if self.waiting_until is not None:
             if now >= self.waiting_until:
                 self.waiting_until = None
-                self.state = "failed"
+                self.state = 'no_fix' if self.receiver_active(now) else 'failed'
             return False
         lost = (now - self.last_fix >= LOSS_SECONDS if self.last_fix is not None
                 else now - self.started >= self.startup_grace)
         if not lost:
             return False
-        if self.last_attempt is not None and now - self.last_attempt < COOLDOWN_SECONDS:
+        # Fresh no-fix TPVs prove a live receiver. Do not reset cold acquisition
+        # indefinitely. Keep one quick recovery attempt after a real fix loss.
+        if self.receiver_active(now) and (self.last_fix is None or self.nofix_attempted):
+            self.state = 'no_fix'
+            return False
+        self.attempts = [stamp for stamp in self.attempts if 0 <= now - stamp < self.attempt_window]
+        if len(self.attempts) >= self.attempt_limit:
+            self.state = 'budget_exhausted'
+            return False
+        if self.last_attempt is not None and now - self.last_attempt < self.cooldown():
             if self.state == "healthy":
                 self.state = "cooldown"
             return False
         self.last_attempt = now
+        self.attempts.append(now)
+        self.consecutive_attempts += 1
+        self.nofix_attempted = True
         self.waiting_until = now + REACQUIRE_SECONDS
         self.state = "recovering"
         return True
@@ -66,19 +98,49 @@ class RecoveryPolicy:
 def load_last_attempt(path: Path, monotonic: float, wall: float) -> float | None:
     try:
         stamp = float(json.loads(path.read_text())["attempted_at_unix"])
+        if not math.isfinite(stamp):
+            raise ValueError('invalid recovery clock')
         # Backwards wall-clock steps must not bypass the cooldown.
         return monotonic - min(COOLDOWN_SECONDS, max(0.0, wall - stamp))
     except FileNotFoundError:
         return None
-    except (ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         LOG.warning("Invalid recovery timestamp; applying full cooldown")
         return monotonic
 
 
-def save_attempt(path: Path, wall: float) -> None:
+def save_attempt(path: Path, wall: float, policy=None) -> None:
     pending = path.with_suffix(".tmp")
-    pending.write_text(json.dumps({"attempted_at_unix": wall}))
+    value = {'attempted_at_unix': wall}
+    if policy is not None:
+        value.update(attempts_unix=[wall - (policy.last_attempt - stamp) for stamp in policy.attempts],
+                     nofix_attempted=policy.nofix_attempted, consecutive_attempts=policy.consecutive_attempts)
+    with pending.open('w') as handle:
+        json.dump(value, handle); handle.flush(); os.fsync(handle.fileno())
     pending.replace(path)
+
+
+def restore_budget(path, policy, wall):
+    policy.last_attempt = load_last_attempt(path, policy.started, wall)
+    try:
+        record = json.loads(path.read_text())
+        if not isinstance(record, dict):
+            raise ValueError('invalid recovery record')
+        stamps = record.get('attempts_unix', [record['attempted_at_unix']])
+        if not isinstance(stamps, list) or len(stamps) > policy.attempt_limit:
+            raise ValueError('invalid attempt history')
+        if any(type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp < 0 for stamp in stamps):
+            raise ValueError('invalid attempt timestamp')
+        policy.attempts = [policy.started - max(0, wall - float(stamp)) for stamp in stamps
+                           if math.isfinite(float(stamp)) and wall - float(stamp) < policy.attempt_window]
+        policy.consecutive_attempts = min(policy.attempt_limit, max(0, int(record.get('consecutive_attempts', 1))))
+        policy.nofix_attempted = record.get('nofix_attempted', True) is True
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        policy.attempts = [policy.started] * policy.attempt_limit
+        policy.state = 'budget_exhausted'
+        LOG.error('GPS recovery budget unreadable; withholding resets pending bounded window')
 
 
 def restart_gps() -> None:
@@ -119,7 +181,7 @@ def main() -> int:
     # Linux monotonic time starts at boot. Do not grant another minute merely
     # because the watchdog itself was restarted during racing.
     policy = RecoveryPolicy(started, startup_grace=max(LOSS_SECONDS, BOOT_GRACE_SECONDS - started))
-    policy.last_attempt = load_last_attempt(STATE_FILE, policy.started, time.time())
+    restore_budget(STATE_FILE, policy, time.time())
     topic = cfg.resolve_topic(cfg.get("gps.recovery_topic"), "nav", "recovery")
     client = make_client(cfg, f"hpr-{cfg.trike_id}-gps-recovery")
     client.max_queued_messages_set(20)
@@ -140,7 +202,7 @@ def main() -> int:
                 # Persist before acting, so a watchdog restart cannot cause a
                 # rapid restart loop. Failed persistence prevents the action.
                 try:
-                    save_attempt(STATE_FILE, time.time())
+                    save_attempt(STATE_FILE, time.time(), policy)
                     capture_diagnostics(latest, policy, now)
                     restart_gps()
                     LOG.warning("GPS-only service recovery requested; allowing 20s to reacquire")
@@ -153,10 +215,15 @@ def main() -> int:
                     LOG.error("GPS recovery unsuccessful; cooldown remains active")
                 elif policy.state == "healthy" and previous_state in {"recovering", "failed"}:
                     LOG.info("GPS position fix recovered")
+                elif policy.state == 'no_fix' and previous_state != 'no_fix':
+                    LOG.info('GPS receiver active without position fix; acquisition left undisturbed')
                 client.publish(topic, json.dumps({"state": policy.state,
                                "last_fix_age_seconds": None if policy.last_fix is None else now - policy.last_fix,
                                "cooldown_remaining_seconds": 0 if policy.last_attempt is None else
-                               max(0, COOLDOWN_SECONDS - (now - policy.last_attempt)),
+                               max(0, policy.cooldown() - (now - policy.last_attempt)),
+                               "attempts_in_window": len(policy.attempts), "attempt_limit": policy.attempt_limit,
+                               "attempt_window_seconds": policy.attempt_window,
+                               "receiver_active": policy.receiver_active(now),
                                "observed_at": datetime.now(timezone.utc).isoformat()}), qos=1, retain=True)
                 previous_state = policy.state
                 next_status = now + 5

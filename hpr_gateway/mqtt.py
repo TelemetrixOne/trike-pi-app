@@ -8,11 +8,9 @@ import paho.mqtt.client as mqtt
 from .config import HprConfig
 
 
-def make_client(config: HprConfig, client_id: str) -> mqtt.Client:
-    try:
-        client = mqtt.Client(client_id=client_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    except Exception:
-        client = mqtt.Client(client_id=client_id)
+def make_client(config: HprConfig, client_id: str, *, reconnect_on_failure=True) -> mqtt.Client:
+    client = mqtt.Client(client_id=client_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+                         clean_session=True, reconnect_on_failure=reconnect_on_failure)
     client.username_pw_set(config.mqtt.username, config.mqtt.password)
     return client
 

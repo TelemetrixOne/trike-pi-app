@@ -1,0 +1,8 @@
+# Hardware-free tests on supported Python 3.13; no live device setup.
+paho-mqtt==2.1.0
+PyYAML==6.0.2
+gpiozero==2.0.1
+colorzero==2.0
+bleak==0.22.3
+dbus-fast==2.44.1; sys_platform == 'linux'
+typing_extensions==4.13.2

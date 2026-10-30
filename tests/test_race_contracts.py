@@ -108,6 +108,7 @@ class RaceContractTests(unittest.TestCase):
         config["services"]["derailleur"]["enabled"] = False
         config["services"]["gpio_control"]["enabled"] = False
         config["video"]["cameras"]["front"]["rotation"] = "sideways"
+        config['services']['video']['enabled'] = True
         with self.assertRaisesRegex(ConfigError, "rotation"):
             HprConfig(config, str(TRIKE1_CONFIG))
 

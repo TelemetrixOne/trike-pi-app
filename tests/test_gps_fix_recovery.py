@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.modules.setdefault("gps", types.ModuleType("gps"))
 from hpr_gateway.services.gps_recovery import (
-    RecoveryPolicy, load_last_attempt, save_attempt, restart_gps,
+    RecoveryPolicy, load_last_attempt, save_attempt, restart_gps, restore_budget,
 )
 
 
@@ -75,6 +75,39 @@ class FixRecoveryTests(unittest.TestCase):
             restart_gps()
         self.assertEqual(run.call_args.args[0],
                          ["systemctl", "--no-block", "restart", "gpsd.service", "hpr-gps.service"])
+
+    def test_live_receiver_initial_no_fix_does_not_restart_for_an_hour(self):
+        policy = RecoveryPolicy(0)
+        wall = datetime.now(timezone.utc)
+        attempts = 0
+        for second in range(3600):
+            policy.observe({'class': 'TPV', 'mode': 1}, second, wall + timedelta(seconds=second))
+            attempts += policy.tick(second)
+        self.assertEqual(attempts, 0)
+        self.assertEqual(policy.state, 'no_fix')
+
+    def test_one_quick_attempt_after_real_fix_loss_then_live_no_fix_left_alone(self):
+        policy = RecoveryPolicy(0)
+        wall = datetime.now(timezone.utc)
+        policy.observe(self.report(wall), 0, wall)
+        attempts = 0
+        for second in range(1, 600):
+            policy.observe({'class': 'TPV', 'mode': 1}, second, wall + timedelta(seconds=second))
+            attempts += policy.tick(second)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(policy.state, 'no_fix')
+
+    def test_stalled_transport_budget_and_restarts_are_persistent(self):
+        policy = RecoveryPolicy(0)
+        self.assertEqual(sum(policy.tick(second) for second in range(600)), 3)
+        self.assertEqual(policy.state, 'budget_exhausted')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'budget.json'
+            save_attempt(path, 1000, policy)
+            resumed = RecoveryPolicy(100)
+            restore_budget(path, resumed, 1000)
+            self.assertFalse(resumed.tick(160))
+            self.assertEqual(resumed.state, 'budget_exhausted')
 
     def test_missing_satellites_sky_and_mqtt_have_no_role_in_loss_clock(self):
         wall = datetime.now(timezone.utc)

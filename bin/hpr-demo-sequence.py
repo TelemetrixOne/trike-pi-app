@@ -29,7 +29,8 @@ def run_demo(config, timeout=45.0, client=None, request_id=None, output=print):
     prefix = f"{config.topic_root.strip('/')}/{config.trike_id}"
     request_topic = f"{prefix}/control/demo/request"
     status_topic = f"{prefix}/control/demo/status"
-    client = client or make_client(config, f"hpr-{config.trike_id}-demo-cli-{uuid.uuid4().hex[:8]}")
+    client = client or make_client(config, f"hpr-{config.trike_id}-demo-cli-{uuid.uuid4().hex[:8]}",
+                                   reconnect_on_failure=False)
     subscribed = threading.Event()
     messages = queue.Queue()
 
@@ -47,7 +48,7 @@ def run_demo(config, timeout=45.0, client=None, request_id=None, output=print):
         subscribed.set()
 
     def on_message(_mqtt_client, _userdata, message):
-        if message.topic != status_topic:
+        if message.topic != status_topic or getattr(message, 'retain', False):
             return
         try:
             status = json.loads(message.payload)
@@ -74,7 +75,9 @@ def run_demo(config, timeout=45.0, client=None, request_id=None, output=print):
                 output(f"MQTT {kind}: {detail}; demo not requested.")
                 return 2
 
-        payload = json.dumps({"action": "START", "request_id": request_id})
+        issued = time.time()
+        payload = json.dumps({'schema_version': 1, 'action': 'START', 'request_id': request_id,
+                              'issued_at': issued, 'expires_at': issued + 5})
         published = client.publish(request_topic, payload, qos=1, retain=False)
         published.wait_for_publish(timeout=5)
         if not published.is_published():
@@ -102,8 +105,8 @@ def run_demo(config, timeout=45.0, client=None, request_id=None, output=print):
             if state in TERMINAL_STATES:
                 return 0 if state == "completed" else 1
     finally:
-        client.loop_stop()
         client.disconnect()
+        client.loop_stop()
 
 
 def main(argv=None):

@@ -31,6 +31,7 @@ class TrikeConfigSyncTests(unittest.TestCase):
         data["services"].setdefault("heart_rate", {})["enabled"] = False
         data["services"].setdefault("derailleur", {})["enabled"] = False
         data["services"].setdefault("gpio_control", {})["enabled"] = False
+        data['services'].setdefault('video', {})['enabled'] = True
         data["derailleur"]["enabled"] = False
         data["video"]["cameras"]["front"]["device"] = "/dev/v4l/by-id/old-front"
         data["video"]["mediamtx_sha256"] = "0" * 64

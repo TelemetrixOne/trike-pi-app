@@ -1,6 +1,6 @@
 hpr:
   trike_id: "trike1"
-  display_name: "Trike One"
+  display_name: "Example vehicle"
   topic_root: "hpr"
   environment: "production"
 
@@ -11,8 +11,8 @@ pi:
   tailscale_ip: null
 
 credentials:
-  default_username: "hpr"
-  default_password: "hPr01"
+  default_username: "CHANGE_ME"
+  default_password: "CHANGE_ME"
 
 network:
   tailscale_required: true
@@ -20,8 +20,8 @@ network:
   mqtt:
     host: "CHANGE_ME"
     port: 1883
-    username: "hpr"
-    password: "hPr01"
+    username: "CHANGE_ME"
+    password: "CHANGE_ME"
 
   mediamtx:
     enabled: false
@@ -76,11 +76,16 @@ services:
     enabled: true
     interval_seconds: 5
     topic: "{topic_root}/{trike_id}/pi/heartbeat"
-    legacy_topics:
-      - "hpv/01/gw/last_seen"
+    publish_legacy_topics: false
+    legacy_topics: []
+
+  health_agent:
+    enabled: true
+  demo_show:
+    enabled: false
 
   tpms:
-    enabled: true
+    enabled: false
     publish_retain: false
     publish_qos: 1
     stale_seconds: 300
@@ -88,7 +93,7 @@ services:
     enabled: true
 
   gps:
-    enabled: true
+    enabled: false
 
   gpio_control:
     enabled: false
@@ -116,18 +121,18 @@ services:
       video_health: "hpr-video-mediamtx.service"
 
   heart_rate:
-    enabled: true
+    enabled: false
 
   power_cadence:
-    enabled: true
+    enabled: false
   power_cadence_config_sync:
     enabled: true
 
   derailleur:
-    enabled: true
+    enabled: false
 
   video:
-    enabled: true
+    enabled: false
 
   power_watch:
     enabled: true
@@ -162,7 +167,7 @@ gps:
   topic: "{topic_root}/{trike_id}/nav"
   status_topic: "{topic_root}/{trike_id}/nav/status"
   gpsd_enabled: true
-  device: "/dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00"
+  device: "/dev/serial/by-id/CHANGE_ME-GNSS"
   usb_vendor_id: "1546"
   usb_product_id: "01a9"
   hotplug_recovery_enabled: true
@@ -172,6 +177,8 @@ gps:
   reconnect_max_seconds: 15.0
 
 gpio:
+  # Illustrative engineering layout only. GPIO service is disabled until
+  # enrolled and reviewed against this vehicle's actual wiring/calibration.
   enabled: true
   profile_version: "2026-09-16"
   review_status: "CONFIRMED"

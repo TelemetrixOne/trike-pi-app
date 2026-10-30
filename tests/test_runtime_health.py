@@ -52,11 +52,21 @@ class RuntimeHealthTests(unittest.TestCase):
 
     def test_unreadable_truncated_or_malformed_logs_never_become_zero(self):
         for output, error in (('', 'Permission denied'), ('bad json', ''),
-                              ('{"PRIORITY":"4"}\n' * 3, ''), ('{"PRIORITY":"6"}', '')):
+                              ('{"PRIORITY":"4"}\n' * 3, ''), ('{"PRIORITY":"8"}', '')):
             with self.subTest(output=output), patch.object(health, 'LOG_ENTRY_LIMIT', 2), \
                     patch.object(health.subprocess, 'run', return_value=SimpleNamespace(stdout=output, stderr=error)):
                 with self.assertRaises(Exception):
                     health.journal_counts()
+
+    def test_python_warning_and_error_text_recorded_as_info_is_counted_once(self):
+        rows = [({'PRIORITY': '6', 'MESSAGE': text}) for text in (
+            'WARNING:hpr_gps_recovery:receiver stalled', 'ERROR:hpr_gps_recovery:failed',
+            '2026-10-30 10:00:00,123 ERROR hpr_gpio: driver unavailable',
+            'INFO:hpr_gps:ERROR is part of this informational message', 'ordinary informational log')]
+        rows.append({'PRIORITY': '3', 'MESSAGE': 'ERROR:already journal error'})
+        with patch.object(health.subprocess, 'run', return_value=SimpleNamespace(
+                stdout='\n'.join(json.dumps(row) for row in rows), stderr='')):
+            self.assertEqual(health.journal_counts(), (1, 3))
 
     @staticmethod
     def read(path):

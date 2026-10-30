@@ -14,7 +14,8 @@ def main() -> int:
     service = config.get("services.heartbeat", {})
     interval = float(service.get("interval_seconds", 5))
     topics = [config.resolve_topic(service.get("topic"), "pi", "heartbeat")]
-    topics.extend(config.resolve_topic(topic) for topic in (service.get("legacy_topics", []) or []))
+    if service.get('publish_legacy_topics', False):
+        topics.extend(config.resolve_topic(topic) for topic in (service.get('legacy_topics', []) or []))
     client = connect_client(config, f"hpr-{config.trike_id}-heartbeat")
     while True:
         payload = datetime.now(timezone.utc).isoformat()

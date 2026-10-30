@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 import uuid
 from unittest.mock import patch
@@ -44,7 +45,9 @@ class DemoShowTests(unittest.TestCase):
 
     def test_request_must_be_fresh_unretained_uuid(self):
         identifier = str(uuid.uuid4())
-        raw = json.dumps({"action": "START", "request_id": identifier}).encode()
+        issued = time.time()
+        raw = json.dumps({'schema_version': 1, 'action': 'START', 'request_id': identifier,
+                          'issued_at': issued, 'expires_at': issued + 5}).encode()
         self.assertEqual(parse_request(raw, False), identifier)
         with self.assertRaises(ValueError):
             parse_request(raw, True)

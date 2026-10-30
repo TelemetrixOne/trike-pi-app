@@ -1,0 +1,26 @@
+# Audited working Pi runtime versions, Python 3.13 / Linux ARM64.
+# This exact-version lock is not a complete advisory/SBOM or artifact-hash audit.
+Adafruit-Blinka==9.2.0
+Adafruit-Blinka-Raspberry-Pi5-Neopixel==1.0.0rc2
+adafruit-circuitpython-ads1x15==3.0.5
+adafruit-circuitpython-busdevice==5.2.17
+adafruit-circuitpython-connectionmanager==3.1.8
+adafruit-circuitpython-requests==4.1.17
+adafruit-circuitpython-typing==1.12.3
+Adafruit-PlatformDetect==3.89.1
+Adafruit-PureIO==1.1.11
+binho-host-adapter==0.1.6
+bleak==0.22.3
+colorzero==2.0
+dbus-fast==2.44.1
+gpiozero==2.0.1
+lgpio==0.2.2.0
+paho-mqtt==2.1.0
+pyftdi==0.57.2
+pyserial==3.5
+pyusb==1.3.1
+PyYAML==6.0.2
+RPi.GPIO==0.7.1
+rpi_ws281x==5.0.0
+sysv_ipc==1.2.0
+typing_extensions==4.13.2

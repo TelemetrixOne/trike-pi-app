@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -53,11 +54,21 @@ def disk_usage() -> float:
     return round(100 * usage.used / usage.total, 1)
 
 
+def application_priority(message: object) -> int | None:
+    if not isinstance(message, str):
+        return None
+    # Recognise emitted Python formats only, never incidental words in a log.
+    match = re.match(r'^(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+)?'
+                     r'(CRITICAL|ERROR|WARNING|WARN|INFO|DEBUG)(?=[:\s])', message)
+    return {'CRITICAL': 2, 'ERROR': 3, 'WARNING': 4, 'WARN': 4,
+            'INFO': 6, 'DEBUG': 7}.get(match.group(1)) if match else None
+
+
 def journal_counts() -> tuple[int, int]:
     result = subprocess.run([
         'journalctl', '--system', f'--since=-{LOG_WINDOW_SECONDS}s',
-        '--priority=0..4', f'--lines={LOG_ENTRY_LIMIT + 1}', '--output=json',
-        '--output-fields=__REALTIME_TIMESTAMP,PRIORITY', '--no-pager', '--quiet',
+        f'--lines={LOG_ENTRY_LIMIT + 1}', '--output=json',
+        '--output-fields=__REALTIME_TIMESTAMP,PRIORITY,MESSAGE', '--no-pager', '--quiet',
     ], text=True, capture_output=True, timeout=5, check=True)
     # Permissions/partial-journal errors must not look like a healthy zero count.
     if result.stderr.strip():
@@ -67,13 +78,17 @@ def journal_counts() -> tuple[int, int]:
         raise RuntimeError('Log window exceeds bounded query limit; counts unavailable')
     warnings = errors = 0
     for line in lines:
-        priority = int(json.loads(line)['PRIORITY'])
+        entry = json.loads(line)
+        priority = int(entry['PRIORITY'])
+        if not 0 <= priority <= 7:
+            raise ValueError('Unexpected journal priority')
+        level = application_priority(entry.get('MESSAGE'))
+        if level is not None:
+            priority = min(priority, level)
         if priority == 4:
             warnings += 1
         elif 0 <= priority <= 3:
             errors += 1
-        else:
-            raise ValueError('Unexpected journal priority')
     return warnings, errors
 
 
@@ -102,6 +117,7 @@ class RuntimeHealth:
                 'disk_used_pct': None,
                 'logs_window_seconds': LOG_WINDOW_SECONDS, 'logs_scope': 'system_journal',
                 'logs_refresh_seconds': LOG_INTERVAL, 'sample_interval_seconds': METRICS_INTERVAL,
+                'logs_severity_source': 'journal_priority_and_recognised_python_levels',
                 **self.logs, 'observed_at': None, 'errors': ['not_sampled']}
 
     def collect(self) -> None:

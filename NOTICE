@@ -1,0 +1,10 @@
+TelemetrixOne Raspberry Pi application
+
+Original project code is offered under the Apache License, Version 2.0.
+Existing third-party copyright and licence notices retain their own terms.
+This notice does not assert ownership of third-party code or transfer any
+contributor's copyright. The licensing choice does not change repository
+visibility or certify historical secrets/third-party provenance absent.
+
+Bundled MediaMTX v1.19.1 is a separate MIT-licensed component.
+See vendor/mediamtx/LICENSE and THIRD_PARTY_NOTICES.md.

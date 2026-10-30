@@ -89,6 +89,22 @@ done
 
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-$(read_yaml_scalar system.install_root /opt/hpr/gateway)}"
 VENV_DIR="${INSTALL_ROOT}/venv"
+case "$(realpath -m "${INSTALL_ROOT}")" in
+  /opt/hpr/*) ;;
+  *) echo 'Refusing install outside the supported /opt/hpr application namespace.' >&2; exit 1 ;;
+esac
+if [ -x "${VENV_DIR}/bin/python" ] && grep -qi 'include-system-site-packages = true' "${VENV_DIR}/pyvenv.cfg"; then
+  echo 'Legacy inherited environment preserved. Validate an isolated candidate and schedule controlled activation before installing.' >&2
+  exit 1
+fi
+if [ -d "${INSTALL_ROOT}" ] && [ -n "$(find "${INSTALL_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo 'Existing installation preserved. Use a reviewed, hash-guarded deployment; this installer is for an empty target only.' >&2
+  exit 1
+fi
+if systemctl is-enabled --quiet hpr-trike1-health-agent.service 2>/dev/null || systemctl is-active --quiet hpr-trike1-health-agent.service 2>/dev/null; then
+  echo 'Legacy health agent preserved. Complete the guarded observer migration before installation to avoid competing recovery owners.' >&2
+  exit 1
+fi
 
 if ! command -v rsync >/dev/null 2>&1; then
   if ! command -v apt-get >/dev/null 2>&1; then
@@ -103,7 +119,8 @@ install -d "${INSTALL_ROOT}"
 rsync -a --delete \
   --exclude '/venv/' \
   --exclude '/runtime/' \
-  "${REPO_ROOT}/pi-gateway/" "${INSTALL_ROOT}/"
+  --exclude '/.git' \
+  "${REPO_ROOT}/" "${INSTALL_ROOT}/"
 
 ensure_python_venv() {
   if "${PYTHON_BIN}" -c 'import ensurepip, venv' >/dev/null 2>&1; then
@@ -161,14 +178,16 @@ if [ "$(read_yaml_scalar services.gps.enabled false)" = "true" ] && \
 fi
 
 if [ ! -x "${VENV_DIR}/bin/python" ]; then
-  "${PYTHON_BIN}" -m venv --system-site-packages "${VENV_DIR}"
+  GPS_BINDING=()
+  if [ "$(read_yaml_scalar services.gps.enabled false)" = "true" ]; then GPS_BINDING=(--gps-binding); fi
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/prepare-pi-environment.py" \
+    --destination "${VENV_DIR}" --scope "${INSTALL_SCOPE}" "${GPS_BINDING[@]}"
+elif grep -qi 'include-system-site-packages = true' "${VENV_DIR}/pyvenv.cfg"; then
+  echo 'Legacy inherited environment preserved. Prepare/check an isolated candidate and activate only in an approved maintenance window.' >&2
+  exit 1
+else
+  "${VENV_DIR}/bin/python" -m pip check
 fi
-"${VENV_DIR}/bin/pip" install --upgrade pip
-REQUIREMENTS_FILE="${INSTALL_ROOT}/requirements.txt"
-if [ "${INSTALL_SCOPE}" = "gps" ]; then
-  REQUIREMENTS_FILE="${INSTALL_ROOT}/requirements.gps.txt"
-fi
-"${VENV_DIR}/bin/pip" install --prefer-binary -r "${REQUIREMENTS_FILE}"
 
 PYTHONPATH="${INSTALL_ROOT}" "${VENV_DIR}/bin/python" -m hpr_gateway.validate_config --config "${CONFIG_PATH}"
 
@@ -327,6 +346,7 @@ START_DAEMON="true"
 USBAUTO="true"
 DEVICES="${gps_device}"
 GPSD_OPTIONS="-n"
+OPTIONS=""
 EOF
 
   if [ "$(cfg gps.hotplug_recovery_enabled --default true)" = "true" ]; then
@@ -397,6 +417,11 @@ install_unit() {
       ;;
   esac
   local exec_start_pre=""
+  local state_directory=""
+  case "${module}" in
+    health_agent) state_directory="StateDirectory=hpr-health-agent" ;;
+    demo_show) state_directory="StateDirectory=hpr-demo-show" ;;
+  esac
   if [ "${module}" = "heart_rate" ]; then
     exec_start_pre="ExecStartPre=+${VENV_DIR}/bin/python -m hpr_gateway.bluetooth_power --config ${CONFIG_PATH} --role heart_rate"
   fi
@@ -414,6 +439,8 @@ TimeoutStartSec=30
 WorkingDirectory=${INSTALL_ROOT}
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=${INSTALL_ROOT}
+${state_directory}
+StateDirectoryMode=0700
 ${exec_start_pre}
 ExecStart=${VENV_DIR}/bin/python -m hpr_gateway.services.${module} --config ${CONFIG_PATH}
 Restart=always
@@ -649,6 +676,8 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   install_unit hpr-heartbeat.service heartbeat
   install_unit hpr-pi-power-health.service pi_power_health
   install_unit hpr-services-health.service services_health
+  install_unit hpr-health-agent.service health_agent
+  install_unit hpr-demo-show.service demo_show
   install_unit hpr-tpms.service tpms
   install_unit hpr-tpms-config-sync.service tpms_config_sync
   install_unit hpr-heart-rate.service heart_rate
@@ -692,6 +721,8 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   enable_service_if_configured heartbeat hpr-heartbeat.service
   enable_service_if_configured pi_power_health hpr-pi-power-health.service
   enable_service_if_configured services_health hpr-services-health.service
+  enable_service_if_configured health_agent hpr-health-agent.service
+  enable_service_if_configured demo_show hpr-demo-show.service
   enable_service_if_configured tpms hpr-tpms.service
   enable_service_if_configured tpms_config_sync hpr-tpms-config-sync.service
   enable_service_if_configured heart_rate hpr-heart-rate.service

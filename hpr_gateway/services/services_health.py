@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import logging
 import subprocess
 import threading
 import time
@@ -10,10 +11,14 @@ from datetime import datetime, timezone
 from hpr_gateway.config import config_arg_parser, enabled_items, load_config
 from hpr_gateway.mqtt import encode_payload, make_client
 from hpr_gateway.runtime_health import METRICS_INTERVAL, RuntimeHealth
+from hpr_gateway.video_health import VideoEvidence
 
 
 def service_health(unit: str) -> str:
-    result = subprocess.run(["systemctl", "is-active", unit], text=True, capture_output=True)
+    try:
+        result = subprocess.run(["systemctl", "is-active", unit], text=True, capture_output=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return 'Unknown'
     state = result.stdout.strip()
     if state == "active":
         return "Good"
@@ -137,7 +142,9 @@ def gps_health_detail(process: str, source: object, age: float | None,
             recovery_fresh = -2 <= (now - recovery_observed).total_seconds() <= 15
         except (TypeError, ValueError):
             pass
-    if process == "Good" and race_enabled and not fix_valid and recovery_fresh and recovery.get("state") == "failed":
+    if (process == 'Good' and race_enabled and not fix_valid and recovery_fresh
+            and recovery.get('state') in ('failed', 'budget_exhausted')
+            and recovery.get('receiver_active') is not True):
         overall, reason = "Failed", "gps_recovery_unsuccessful"
     return {"schema": "hpr.service_health.v2", "trike_id": trike_id, "service": "gps",
             "process": "running" if process == "Good" else process.lower(),
@@ -200,7 +207,7 @@ def pedal_health_detail(process: str, race_enabled: bool, readings: list[dict], 
 
 
 def selected_tpms_names(assignment: object, available: set[str]) -> tuple[list[str], str | None]:
-    """Validate HA's authoritative three-wheel to physical-sensor assignment."""
+    """Validate the authoritative three-wheel to physical-sensor assignment."""
     if not isinstance(assignment, dict):
         return [], "assignment_unavailable"
     names = [str(assignment.get(position, "")).lower() for position in ("front_left", "front_right", "rear")]
@@ -209,6 +216,35 @@ def selected_tpms_names(assignment: object, available: set[str]) -> tuple[list[s
     if any(name not in available for name in names):
         return [], "assignment_references_unconfigured_sensor"
     return names, None
+
+
+def configured_tpms_selection(config):
+    assignment, available = {}, set()
+    for name, sensor in enabled_items(config.get('tpms.sensors', {})):
+        name = name.lower()
+        available.add(name)
+        position = sensor.get('position')
+        if position in ('front_left', 'front_right', 'rear'):
+            if position in assignment:
+                return {}, [], 'assignment_invalid_or_duplicated'
+            assignment[position] = name
+    names, error = selected_tpms_names(assignment, available)
+    return assignment, names, error
+
+
+def sensor_topics(config):
+    tpms = {name.lower(): f"{config.resolve_topic(sensor.get('topic'), 'tpms', name).rstrip('/')}/availability"
+            for name, sensor in enabled_items(config.get('tpms.sensors', {}))}
+    pedals = [f"{config.resolve_topic(device.get('topic_base'), 'pedals', name).rstrip('/')}/status"
+              for name, device in enabled_items(config.get('power_cadence.devices', {}))]
+    return tpms, pedals, [topic.removesuffix('/status') + '/power_w' for topic in pedals]
+
+
+def unit_expected(config, unit):
+    key = unit.removeprefix('hpr-').removesuffix('.service').replace('-', '_')
+    if key.startswith('video_'):
+        key = 'video'
+    return config.enabled(key) if key in config.get('services', {}) else True
 
 
 def subscribe_source_topics(client: object, source_topics: list[str]) -> None:
@@ -227,14 +263,13 @@ def main() -> int:
     base_topic = config.resolve_topic(config.get("health.base_topic"), "pi")
     gps_status_topic = config.resolve_topic(config.get("gps.status_topic"), "nav", "status")
     gps_recovery_topic = config.resolve_topic(config.get("gps.recovery_topic"), "nav", "recovery")
-    race_mode_topic = f"hpr/{config.trike_id}/agents/health/enabled/state"
-    hr_status_topic = f"hpr/{config.trike_id}/hr/status"
-    hr_data_topic = f"hpr/{config.trike_id}/hr/json"
+    race_mode_topic = config.topic('agents', 'health', 'enabled', 'state')
+    hr_status_topic = config.topic('hr', 'status')
+    hr_data_topic = config.topic('hr', 'json')
     tpms_topics_by_name = {
         name.lower(): f"{config.resolve_topic(sensor.get('topic'), 'tpms', name).rstrip('/')}/availability"
         for name, sensor in enabled_items(config.get("tpms.sensors", {}))
     }
-    tpms_assignment_topic = f"hpr/{config.trike_id}/config/tpms_assignments"
     gpio_evidence_topic = f"{base_topic}/gpio_evidence"
     gpio_max_age = max(15.0, interval * 3)
     tpms_fresh_seconds = float(config.get("services.tpms.stale_seconds", 300)) + interval
@@ -250,7 +285,6 @@ def main() -> int:
         gps_recovery_topic,
         hr_status_topic,
         hr_data_topic,
-        tpms_assignment_topic,
         gpio_evidence_topic,
         *tpms_topics_by_name.values(),
         *pedal_status_topics,
@@ -271,16 +305,54 @@ def main() -> int:
     runtime_health = RuntimeHealth(config.trike_id)
     runtime_health.start()
     next_metrics_publish = 0.0
+    video_evidence = VideoEvidence()
+    last_reload_error = None
     while True:
+        # The combined writer updates assignments atomically; this reader must
+        # follow those changes without restarting unrelated hardware services.
+        try:
+            latest = load_config(args.config)
+            if (latest.topic_root, latest.trike_id, latest.mqtt) != (config.topic_root, config.trike_id, config.mqtt):
+                raise ValueError('Transport/identity changed; health service reload required')
+            config = latest
+            units = config.get('services.services_health.units', {})
+            new_tpms, new_pedals, new_data = sensor_topics(config)
+            previous_topics = set(tpms_topics_by_name.values()) | set(pedal_status_topics) | set(pedal_data_topics)
+            next_topics = set(new_tpms.values()) | set(new_pedals) | set(new_data)
+            source_topics = [t for t in source_topics if t not in previous_topics] + sorted(next_topics)
+            for topic in next_topics - previous_topics:
+                client.subscribe(topic, qos=1)
+            for topic in previous_topics - next_topics:
+                client.unsubscribe(topic)
+            tpms_topics_by_name, pedal_status_topics, pedal_data_topics = new_tpms, new_pedals, new_data
+            last_reload_error = None
+        except Exception as exc:
+            error = type(exc).__name__ + ': ' + str(exc)[:120]
+            if error != last_reload_error:
+                logging.error('Health configuration reload failed: %s', error)
+            last_reload_error = error
+            for suffix in units:
+                client.publish(f'{base_topic}/{suffix}', 'Unknown', qos=1, retain=True)
+            time.sleep(interval)
+            continue
         if time.monotonic() >= next_metrics_publish:
             client.publish(f"{base_topic}/system_metrics", payload=encode_payload(runtime_health.snapshot()),
                            qos=1, retain=True)
             next_metrics_publish = time.monotonic() + METRICS_INTERVAL
         for topic_suffix, unit in units.items():
             topic = f"{base_topic}/{topic_suffix}"
+            if not unit_expected(config, unit):
+                detail = {'schema': 'hpr.service_health.v2', 'trike_id': config.trike_id,
+                          'service': topic_suffix.removesuffix('_health'), 'overall': 'Disabled',
+                          'expected': False, 'reason': 'service_disabled_in_configuration',
+                          'observed_at': datetime.now(timezone.utc).isoformat()}
+                client.publish(topic, 'Disabled', qos=1, retain=True)
+                client.publish(f"{base_topic}/{topic_suffix.removesuffix('_health')}_detail", encode_payload(detail), qos=1, retain=True)
+                continue
             process = service_health(unit)
             race_value, _ = statuses.get(race_mode_topic)
-            race_enabled = str(race_value or "OFF").upper() == "ON"
+            race_enabled = (str(race_value or 'OFF').upper() == 'ON'
+                            if config.get('health.require_race_mode', False) else True)
             if topic_suffix == "gpio_health":
                 evidence, received = statuses.get(gpio_evidence_topic)
                 detail = gpio_health_detail(process, evidence, age_seconds(received),
@@ -295,8 +367,7 @@ def main() -> int:
                 client.publish(topic, payload=legacy_overall(detail["overall"]), qos=1, retain=True)
                 client.publish(f"{base_topic}/gps_detail", payload=encode_payload(detail), qos=1, retain=True)
             elif topic_suffix == "tpms_health":
-                assignment, _ = statuses.get(tpms_assignment_topic)
-                selected_names, assignment_error = selected_tpms_names(assignment, set(tpms_topics_by_name))
+                assignment, selected_names, assignment_error = configured_tpms_selection(config)
                 selected_topics = [tpms_topics_by_name[name] for name in selected_names]
                 readings = [(state_from(statuses.get(t)[0]), age_seconds(statuses.get(t)[1])) for t in selected_topics]
                 all_online = not assignment_error and len(readings) == 3 and all(
@@ -309,6 +380,7 @@ def main() -> int:
                           "device": "online" if all_online else "missing_sensor", "data": "fresh" if all_online else "stale",
                           "overall": overall, "reason": reason, "expected": race_enabled,
                           "assignment": assignment if isinstance(assignment, dict) else None,
+                          "assignment_source": 'applied_trike_configuration',
                           "sensors": [{"name": name, "topic": t, "state": s, "age_seconds": a}
                                       for name, t, (s, a) in zip(selected_names, selected_topics, readings)],
                           "observed_at": datetime.now(timezone.utc).isoformat()}
@@ -342,6 +414,10 @@ def main() -> int:
                           "observed_at": datetime.now(timezone.utc).isoformat()}
                 client.publish(topic, payload=legacy_overall(overall), qos=1, retain=True)
                 client.publish(f"{base_topic}/heart_rate_detail", payload=encode_payload(detail), qos=1, retain=True)
+            elif topic_suffix == 'video_health':
+                detail = video_evidence.inspect(config, process)
+                client.publish(topic, payload=detail['overall'], qos=1, retain=True)
+                client.publish(f'{base_topic}/video_detail', payload=encode_payload(detail), qos=1, retain=True)
             else:
                 client.publish(topic, payload=process, qos=1, retain=True)
         time.sleep(interval)

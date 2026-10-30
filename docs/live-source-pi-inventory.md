@@ -246,7 +246,7 @@ Migration rule:
 
 - Runtime credentials must be read from `/etc/hpr/hpr.yaml`.
 - Repo runtime code must not contain hardcoded `mqtt_hpv` or password constants.
-- Example config may contain the HPR standard `hpr` / `hPr01` pair as the desired editable runtime config.
+- Example credentials are placeholders; provisioning must supply site-specific secrets.
 
 ## Display Names Found Outside Config
 
