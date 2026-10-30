@@ -149,9 +149,9 @@ returned 38 advisory IDs (including aliases) for six declared Go components:
 go-git/v5, webtransport-go, x/crypto, x/net, x/text and Go standard library.
 The query is a version match, not proof of runtime exploitability or clearance.
 OS/native media packages and dependency reachability require separate review.
-The unchanged MediaMTX binary is not declared security-cleared by this work.
-See `scripts/audit-pinned-components.py` and the official OSV API linked there.
-The web coordinator has been informed and is keeping F22/F23 open.
+That inventory described the original binary. See the patched replacement and
+deployed boundary below, and `scripts/audit-pinned-components.py` for the original
+query. A version match alone does not establish runtime exploitability.
 
 A separately downloaded official MediaMTX v1.21.3 ARM64 candidate was verified
 against GitHub's release-asset SHA256 and inspected without execution or Pi
@@ -161,9 +161,72 @@ an official binary upgrade alone is not security clearance. A patched broker
 build, reachability review and isolated compatibility test are needed before a
 separate video-broker rollout; the native camera/HDMI path need not change.
 
-The binary inventory and 109 collected module notice files cover 83 of 85 named
-Go modules; two notice gaps and complete licence compatibility review remain.
+The patched build replaces that initial inventory. Its 65 compiled modules have
+79 collected notice files, with package-scoped attribution for the linked
+`github.com/benburkert/openpgp/aes/keywrap` package. The embedded hls.js 1.7.3
+bundle has Apache-2.0 terms plus its Babel/regenerator MIT notices. Source,
+provenance, notice hashes and ARM64/AMD64 reachability reports are committed.
+Both architecture-specific govulncheck runs passed. A module-only x/crypto
+advisory remains in the dependency graph without vulnerable package/symbol
+reachability; this is not a blanket security or public-release clearance.
 Repository visibility and history were not changed.
+
+## Patched media deployment and shared-memory recovery
+
+Source commits `ba72fda` and `a0bc507` vendor and validate MediaMTX
+`v1.21.3-tm1.1`, built with Go 1.27.3 and patched x/net v0.62.0. The Pi ARM64
+binary SHA256 is
+`ee2c5ab2f61c3fd70173f8a959fe603a7bdff2b3451a379aed44a5a8ca298709`.
+The independent broker updater is disabled; updates remain Git-managed.
+
+Before deployment, isolated software-only old/new relay tests passed front/rear
+with 120/120 frames, preserved RTP timestamps, denied untrusted read/publish,
+and allowed trusted read while denying publish. These loopback timings are not
+camera-to-display latency measurements. The local suite passed 198 tests and
+84 subtests after the final changes.
+
+The first live broker attempt rolled back when publisher children could no
+longer open capture buffers. Capture processes still mapped deleted
+`/dev/shm/shmpipe.*` objects while the host names were absent. The exact deletion
+source was not conclusively traced; login IPC cleanup was a plausible cause.
+Native supervision correctly restarted publishers, which then failed to reopen
+the missing names. This caused a temporary stream outage even after restoring
+the old broker.
+
+Commit `84c3b7d` isolates `/dev/shm` in the native video service's mount namespace
+and uses a writable runtime cache. One approved compositor restart regenerated
+buffers; backup is `/opt/hpr/backups/video-private-shm-20261030T043350Z`.
+The parent, both captures and both publishers shared the same mount namespace;
+buffer names and streams survived SSH disconnect/reconnect. Real camera and DRM
+device access remain available. No GPIO restart or actuator command occurred.
+
+The repeated guarded broker rollout succeeded, with backup
+`/opt/hpr/backups/media-broker-security-20261030T043428Z`. Only MediaMTX restarted
+in that rollout. Native parent 103127, capture processes 103135/103136, GPIO
+76885 and the other protected service processes remained unchanged.
+
+The broker now serves RTSP/TCP only, exact front/rear paths, localhost
+read/publish and deployment-enrolled remote readers with read-only permission.
+Both verified remote reader hosts reconnected. API, metrics, playback, HLS,
+WebRTC, RTMP, SRT and MoQ are disabled on this Pi broker. The prior unexpected
+8892 listener was MoQ, not a metrics endpoint; it is now absent. Central HLS and
+WebRTC remain the web platform's responsibility. The compositor requires the
+console service and only wants the broker, allowing future broker maintenance
+without stopping native capture or HDMI.
+
+Both streams passed ffprobe and decoded frames after deployment: front H264
+800x450 at 30 fps, rear H264 640x360 at 25 fps. Local tuning files and full central
+profile hash were unchanged; configuration-sync reported fresh increasing
+single-writer applied heartbeats. Timestamp overlays remained enabled. HDMI was
+disconnected, so physical appearance and latency still require hardware testing.
+
+Final retained telemetry reported video Good with all four workers advancing,
+GPIO Good with four output/four input pin readbacks, and GPS Good with a fresh
+3D fix. A sample showed CPU 58.2%, RAM 35.7%, temperature 42.8 C and disk 6.9%.
+The 30-minute log metric reported zero warnings/errors, and a direct post-rollout
+HPR journal query also found none. Failed-unit listings contained only preserved
+transient development/test attempts from earlier in this maintenance, not failed
+production services. Their journals were retained for diagnosis.
 
 ## Credential migration is separate and coordinated
 
@@ -184,6 +247,6 @@ The human deferred phone re-pairing, so old/shared credentials remain valid and
 no independent credential revocation was performed. The web coordinator owns
 per-device account/ACL provisioning and the eventual coordinated cutover.
 
-Pending release work includes coordinated credential migration, remaining media
-security-boundary remediation and complete transitive binary
-licence/advisory review. This document does not mark those tasks complete.
+Pending release work includes coordinated credential migration and broader
+platform/history/export review. The scoped Pi binary and media-boundary work
+above does not mark the complete product cleared for public release.
