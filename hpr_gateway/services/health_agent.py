@@ -84,8 +84,8 @@ class HealthAgent:
         return result
 
     def check(self):
-        units = self.config.get('services.services_health.units', {})
-        services = [self.service_state(unit) for unit in dict.fromkeys(units.values()) if unit_expected(self.config, unit)]
+        units = self.config.get('health_agent.units') or list(self.config.get('services.services_health.units', {}).values())
+        services = [self.service_state(unit) for unit in dict.fromkeys(units) if unit_expected(self.config, unit)]
         metrics = self.metrics()
         limits = self.config.get('health_agent.limits', {})
         alerts = [{'severity': 'critical', 'code': 'service_' + value['unit'],
