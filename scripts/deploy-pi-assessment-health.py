@@ -192,7 +192,12 @@ def main():
     # Reject unknown durable state before stopping any service.
     for directory in (Path('/var/lib/hpr-health-agent'), Path('/var/lib/hpr-demo-show')):
         if directory.exists() and any(directory.iterdir()):
-            raise RuntimeError('Existing unrecognised state; preserve and inspect')
+            known_mode = (directory.name == 'hpr-health-agent' and
+                          {p.name for p in directory.iterdir()} == {'mode.json'} and
+                          json.loads((directory / 'mode.json').read_text()) == {'enabled': mode == 'ON'})
+            if not known_mode:
+                raise RuntimeError('Existing unrecognised state; preserve and inspect')
+            shutil.copy2(directory / 'mode.json', backup / 'previous-mode.json')
     try:
         system('stop', LEGACY, *AFFECTED)
         with config_lock(CONFIG):
@@ -238,7 +243,7 @@ WantedBy=multi-user.target
             FENCE.write_text('[Unit]\nConditionPathExists=!/etc/hpr/.canonical-health-observer-v1\n')
             MARKER.write_text('Dedicated recovery owners; canonical health observer only.\n')
             atomic_write(CONFIG, yaml.safe_dump(candidate, sort_keys=False).encode())
-        command(str(ROOT / 'venv/bin/python'), '-B', '-m', 'hpr_gateway.validate_config', '--config', str(CONFIG))
+        command('env', 'PYTHONPATH=' + str(ROOT), str(ROOT / 'venv/bin/python'), '-B', '-m', 'hpr_gateway.validate_config', '--config', str(CONFIG))
         system('daemon-reload')
         command('systemd-analyze', 'verify', str(NEW_UNIT), '/etc/systemd/system/hpr-demo-show.service')
         system('disable', LEGACY)
