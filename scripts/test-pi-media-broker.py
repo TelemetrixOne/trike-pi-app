@@ -49,12 +49,11 @@ def main():
                 if check.connect_ex(('127.0.0.1', port)) == 0: raise RuntimeError('Test port already in use')
             config = {'logLevel': 'warn', 'rtsp': True, 'rtspAddress': '127.0.0.1:' + str(port),
                       'rtspTransports': ['tcp'], 'rtmp': False, 'hls': False, 'webrtc': False,
-                      'srt': False, 'api': False, 'metrics': False, 'pprof': False, 'playback': False,
+                      'srt': False, 'moq': False, 'api': False, 'metrics': False, 'pprof': False, 'playback': False,
                       'authMethod': 'internal', 'authInternalUsers': [{'user': 'any', 'pass': '',
                           'ips': ['127.0.0.1/32', '::1/128'], 'permissions': [
                               {'action': action, 'path': path} for action in ('publish','read') for path in ('front','rear')]}],
                       'paths': {path: {'source': 'publisher'} for path in ('front','rear')}}
-            if b'moqAddress' in binary.read_bytes(): config['moq'] = False
             file = stage / (label + '.yaml')
             file.write_text(yaml.safe_dump(config, sort_keys=False)); os.chmod(file, 0o644)
             unit = 'hpr-media-isolation-' + label + '-' + str(os.getpid())
@@ -71,6 +70,8 @@ def main():
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Isolated broker did not start; inspect transient unit')
                 time.sleep(.1)
+            time.sleep(1)
+            run('systemctl', 'is-active', '--quiet', unit)
             results[label] = {}
             for path in ('front', 'rear'):
                 try:
