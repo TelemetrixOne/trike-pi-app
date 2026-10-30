@@ -127,8 +127,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-config-sha256', required=True)
     parser.add_argument('--observer-restarts-approved', action='store_true')
+    parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
-    if os.geteuid() != 0 or not args.observer_restarts_approved:
+    if os.geteuid() != 0 or (not args.check_only and not args.observer_restarts_approved):
         raise RuntimeError('Root and approved affected observer restarts required')
     raw = CONFIG.read_bytes()
     if hashlib.sha256(raw).hexdigest() != args.expected_config_sha256:
@@ -162,6 +163,11 @@ def main():
     for unit in AFFECTED + [LEGACY]:
         system('is-active', '--quiet', unit)
     before = fingerprint()
+    if args.check_only:
+        print(json.dumps({'preflight': 'passed', 'hardware_settings_preserved': True,
+                          'legacy_mode': mode, 'baseline_commit': manifest['baseline_commit'],
+                          'central_hash': config.get('configuration.trike_hash')}))
+        return
     backup = Path('/opt/hpr/backups') / ('assessment-health-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
     backup.mkdir(mode=0o700)
     saved = []
