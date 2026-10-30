@@ -41,6 +41,11 @@ def main():
         raise RuntimeError('Production baseline changed; repeat read-only comparison')
     if (stage / 'baseline-mediamtx').exists(): raise RuntimeError('Do not replace existing test evidence')
     shutil.copy2(baseline, stage / 'baseline-mediamtx')
+    fixture = stage / 'software-frame.h264'
+    run('nice', '-n', '15', 'ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+        '-i', 'color=c=black:s=320x180:r=30', '-frames:v', '1', '-threads', '1',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-x264-params', 'keyint=1', '-f', 'h264', str(fixture))
     before = fingerprint()
     results, units = {}, []
     try:
@@ -75,7 +80,7 @@ def main():
             results[label] = {}
             for path in ('front', 'rear'):
                 try:
-                    output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', timeout=25)
+                    output = run(str(probe), '--url', f'rtsp://127.0.0.1:{port}/{path}', '--h264-fixture', str(fixture), timeout=25)
                 except subprocess.CalledProcessError as exc:
                     (stage / (label + '-' + path + '-failure.txt')).write_text(exc.output)
                     print(exc.output, flush=True)

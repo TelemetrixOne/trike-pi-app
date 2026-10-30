@@ -4,7 +4,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/pion/rtp"
 )
 
@@ -27,6 +27,7 @@ func main() {
 	address := flag.String("url", "rtsp://127.0.0.1:18554/front", "isolated test broker only")
 	count := flag.Int("packets", 120, "number of synthetic RTP packets")
 	deniedIP := flag.String("denied-source", "127.0.0.2", "loopback source to verify ACL denial")
+	fixture := flag.String("h264-fixture", "", "one software-generated H264 IDR frame")
 	flag.Parse()
 	if *count < 30 || *count > 600 {
 		panic("packet count outside bounded test")
@@ -40,15 +41,36 @@ func main() {
 	}
 	tcp := gortsplib.ProtocolTCP
 	makeClient := func(source string) *gortsplib.Client {
-		c := &gortsplib.Client{Scheme: u.Scheme, Host: u.Host, Protocol: &tcp, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}
+		c := &gortsplib.Client{Scheme: u.Scheme, Host: u.Host, Protocol: &tcp, ReadTimeout: 15 * time.Second, WriteTimeout: 5 * time.Second}
 		if source != "" {
 			c.DialContext = (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(source)}, Timeout: 3 * time.Second}).DialContext
 		}
 		return c
 	}
-	sps, _ := base64.StdEncoding.DecodeString("Z0IAH5WoFAFuQA==")
-	pps, _ := base64.StdEncoding.DecodeString("aM4xUg==")
-	f := &format.H264{PayloadTyp: 96, PacketizationMode: 1, SPS: sps, PPS: pps}
+	data, err := os.ReadFile(*fixture)
+	must(err)
+	if len(data) > 1024*1024 {
+		panic("oversized software fixture")
+	}
+	var nalus h264.AnnexB
+	must(nalus.Unmarshal(data))
+	f := &format.H264{PayloadTyp: 96, PacketizationMode: 1}
+	var idr []byte
+	for _, n := range nalus {
+		switch n[0] & 31 {
+		case 7:
+			f.SPS = n
+		case 8:
+			f.PPS = n
+		case 5:
+			idr = n
+		}
+	}
+	if len(f.SPS) == 0 || len(f.PPS) == 0 || len(idr) == 0 {
+		panic("fixture must contain SPS/PPS/IDR")
+	}
+	encoder, err := f.CreateEncoder()
+	must(err)
 	media := &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{f}}
 	session := &description.Session{Medias: []*description.Media{media}}
 	publisher := makeClient("")
@@ -88,10 +110,11 @@ func main() {
 	marker := []byte("TM1relayprobe-v1")
 	reader.OnPacketRTP(receivedMedia, receivedFormat, func(packet *rtp.Packet) {
 		payload := packet.Payload
-		if len(payload) != 28 || payload[0] != 6 || !bytes.Equal(payload[3:19], marker) {
+		index := bytes.Index(payload, marker)
+		if index < 0 || len(payload) < index+24 {
 			return
 		}
-		n, err := strconv.ParseUint(string(payload[19:27]), 16, 32)
+		n, err := strconv.ParseUint(string(payload[index+16:index+24]), 16, 32)
 		if err != nil {
 			return
 		}
@@ -115,11 +138,15 @@ func main() {
 		payload := append([]byte{6, 5, 24}, marker...)
 		payload = append(payload, []byte(fmt.Sprintf("%08x", i))...)
 		payload = append(payload, 0x80)
-		packet := &rtp.Packet{Header: rtp.Header{Version: 2, Marker: true, PayloadType: 96, SequenceNumber: uint16(i), Timestamp: i * 3000, SSRC: 0x544d3101}, Payload: payload}
+		packets, err := encoder.Encode([][]byte{payload, idr})
+		must(err)
 		lock.Lock()
 		sent[i] = time.Now()
 		lock.Unlock()
-		must(publisher.WritePacketRTP(media, packet))
+		for _, packet := range packets {
+			packet.Timestamp = i * 3000
+			must(publisher.WritePacketRTP(media, packet))
+		}
 	}
 	time.Sleep(250 * time.Millisecond)
 	lock.Lock()

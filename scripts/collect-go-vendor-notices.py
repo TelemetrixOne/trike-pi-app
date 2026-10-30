@@ -59,10 +59,12 @@ def collect(component, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--inventory', type=Path)
+    parser.add_argument('--binary', type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    inventory = json.loads((root / 'vendor/mediamtx/build-components.json').read_text())
-    if hashlib.sha256((root / inventory['artifact']).read_bytes()).hexdigest() != inventory['sha256']:
+    inventory = json.loads((args.inventory or root / 'vendor/mediamtx/build-components.json').read_text())
+    if hashlib.sha256((args.binary or root / inventory['artifact']).read_bytes()).hexdigest() != inventory['sha256']:
         raise RuntimeError('Binary changed; regenerate and review build inventory first')
     if args.output.exists():
         raise RuntimeError('Output must not exist; never replace unidentified notice files')
