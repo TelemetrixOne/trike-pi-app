@@ -15,6 +15,7 @@ colorzero==2.0
 dbus-fast==2.44.1
 gpiozero==2.0.1
 # lgpio/_lgpio come only from the audited OS python3-lgpio binding.
+lgpio==0.2.2.0
 paho-mqtt==2.1.0
 pyftdi==0.57.2
 pyserial==3.5
