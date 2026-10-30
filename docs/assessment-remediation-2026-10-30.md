@@ -122,6 +122,12 @@ sent. Native video and MediaMTX PIDs remained 636 and 596; no video restart or
 camera setting change occurred. All gateway Python workers now use the isolated
 environment. The native video path continues to use system Python intentionally.
 
+Restarted Python workers: `hpr-bluetooth-recovery`, `hpr-demo-show`,
+`hpr-derailleur`, `hpr-gpio-control`, `hpr-gps-recovery`, `hpr-gps`,
+`hpr-health-agent`, `hpr-heart-rate`, `hpr-heartbeat`, `hpr-pi-power-health`,
+`hpr-power-cadence`, `hpr-power-watch`, `hpr-services-health`, `hpr-tpms`,
+`hpr-trike-config-sync` (all `.service` units).
+
 Passive before/after reported states matched: headlight AUTO/ON, auxiliary lights
 OFF, horn OFF, DRS RIDER_CONTROL/OPEN. The GPIO process has its SIGHUP handler
 installed; no signal/credential change was needed to establish that. GPIO pin
@@ -146,6 +152,14 @@ OS/native media packages and dependency reachability require separate review.
 The unchanged MediaMTX binary is not declared security-cleared by this work.
 See `scripts/audit-pinned-components.py` and the official OSV API linked there.
 The web coordinator has been informed and is keeping F22/F23 open.
+
+A separately downloaded official MediaMTX v1.21.3 ARM64 candidate was verified
+against GitHub's release-asset SHA256 and inspected without execution or Pi
+deployment. Its Go 1.27.3 inventory still matched three Go advisory IDs across
+x/crypto and x/net, including advisories published after that release. Therefore
+an official binary upgrade alone is not security clearance. A patched broker
+build, reachability review and isolated compatibility test are needed before a
+separate video-broker rollout; the native camera/HDMI path need not change.
 
 The binary inventory and 109 collected module notice files cover 83 of 85 named
 Go modules; two notice gaps and complete licence compatibility review remain.
