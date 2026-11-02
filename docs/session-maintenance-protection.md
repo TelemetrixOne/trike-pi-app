@@ -1,7 +1,9 @@
 # Pi operator maintenance protection
 
-Status: source staged and tested offline. Not deployed to the Pi. No connection,
-service restart or configuration write was made during the protected practice.
+Status: guard-only installation completed on 2 November after independent fresh
+idle admission and read-only live/source comparison. No connection, deployment
+or restart was made during the protected practice; installation occurred later.
+No running service was restarted for this installation.
 
 Offline verification: full local suite 212 passed, with three Linux-only tests
 skipped on Windows; all 17 maintenance tests passed under local Linux root,
@@ -11,8 +13,9 @@ central HTTPS endpoint initially returned HTTP 403 from the operator machine on
 2 November. A repeat request with the `TelemetrixOne-Pi` User-Agent returned fresh
 schema-1 idle/ended authority, so the guard now supplies that explicit client
 header. Generic Python requests still received 403. The Pi was offline on
-Tailscale and SSH timed out at the attempted read-only live comparison; no live
-files were read or modified. Activation remains held until it reconnects.
+Tailscale and SSH timed out at the first attempted read-only live comparison;
+that attempt made no live changes. After the human confirmed reconnection, the
+guard-only rollout below succeeded.
 
 The web-platform protection endpoint is the authority. A deployment owner must
 enrol `network.maintenance.protection_url` in `/etc/hpr/hpr.yaml` with the exact
@@ -112,3 +115,27 @@ the locked config update recheck idle authority. Hardware config and complete
 service PID/restart/unit fingerprints are compared afterwards. A failure leaves
 its backup/evidence for review; it does not restart services or automatically
 roll back through a protected session.
+
+## Live guard-only acceptance on 2 November
+
+Installed guard source commit `94b158aa5292c3a905e37397e059864a10cf6fdf` using the
+committed enrolment script. Backup:
+`/opt/hpr/backups/maintenance-guard-20261102T002257Z`. The four existing operator
+scripts were the demo CLI, GPS uplift, installer and rebuild. Demo/GPS matched
+the prior source baseline; installer/rebuild exactly matched older Git commit
+`8a6d1a3`, with no unidentified enhancement. Those four plus the maintenance
+module/check helper/shell guard were installed; absent historical operator
+scripts were not added. The sole YAML change was deployment-owned
+`network.maintenance.protection_url`; all other parsed configuration was verified
+unchanged. Originals were preserved privately.
+
+The committed non-actuating acceptance script from `d7a9f09` passed on the Pi:
+real fresh HTTPS idle admission succeeded, a competing real local flock was
+refused with exit 75, an isolated synthetic active-session fixture refused
+before its mutation marker, and an isolated endpoint-timeout fixture preserved
+its protected latch. Fixture tests did not change the central session or the
+production protection latch. Configuration fingerprints, all HPR service PIDs,
+restart counts and systemd files/drop-ins were unchanged. No GPIO, camera,
+sensor, configuration-sync or other service was restarted; no credential or
+actuator commands were issued. This is actual operator-entrypoint protection,
+subject to the runtime-recovery and cross-machine limitations described above.
