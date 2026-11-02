@@ -3,12 +3,16 @@
 Status: source staged and tested offline. Not deployed to the Pi. No connection,
 service restart or configuration write was made during the protected practice.
 
-Offline verification: full local suite 211 passed, with three Linux-only tests
-skipped on Windows; all 16 maintenance tests passed under local Linux root,
+Offline verification: full local suite 212 passed, with three Linux-only tests
+skipped on Windows; all 17 maintenance tests passed under local Linux root,
 including the real flock and nested Bash cases. All 46 shell scripts passed
 syntax checks and Python compileall passed. A read-only check of the nominated
-central HTTPS endpoint returned HTTP 403 from the operator machine on 2 November;
-therefore fresh idle authority is not yet verified and live activation is held.
+central HTTPS endpoint initially returned HTTP 403 from the operator machine on
+2 November. A repeat request with the `TelemetrixOne-Pi` User-Agent returned fresh
+schema-1 idle/ended authority, so the guard now supplies that explicit client
+header. Generic Python requests still received 403. The Pi was offline on
+Tailscale and SSH timed out at the attempted read-only live comparison; no live
+files were read or modified. Activation remains held until it reconnects.
 
 The web-platform protection endpoint is the authority. A deployment owner must
 enrol `network.maintenance.protection_url` in `/etc/hpr/hpr.yaml` with the exact

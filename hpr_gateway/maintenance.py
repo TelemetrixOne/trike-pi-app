@@ -90,7 +90,8 @@ def trusted_config():
 def fetch(url):
     # Do not accept environment proxy settings or disable TLS verification.
     opener = build_opener(ProxyHandler({}), HTTPSHandler(context=ssl.create_default_context()), NoRedirect())
-    request = Request(url, headers={'Accept': 'application/json', 'Cache-Control': 'no-cache'})
+    request = Request(url, headers={'Accept': 'application/json', 'Cache-Control': 'no-cache',
+                                    'User-Agent': 'TelemetrixOne-Pi'})
     with opener.open(request, timeout=5) as response:
         if response.status != 200:
             raise MaintenanceBlocked('protection HTTP status not 200')

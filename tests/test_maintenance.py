@@ -82,6 +82,18 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaises(guard.MaintenanceBlocked):
             guard.NoRedirect().redirect_request(None, None, None, None, None, None)
 
+    def test_https_fetch_identifies_pi_and_bounds_response(self):
+        from unittest.mock import MagicMock
+        response = MagicMock(); response.status = 200
+        response.read.return_value = json.dumps(self.value).encode()
+        opener = MagicMock(); opener.open.return_value.__enter__.return_value = response
+        with patch.object(guard, 'build_opener', return_value=opener):
+            self.assertEqual(self.value, guard.fetch('https://test.invalid/protection'))
+        request = opener.open.call_args.args[0]
+        self.assertEqual('TelemetrixOne-Pi', request.get_header('User-agent'))
+        self.assertEqual(5, opener.open.call_args.kwargs['timeout'])
+        response.read.assert_called_once_with(16385)
+
     def test_mutation_and_process_boundaries_recheck(self):
         with patch.object(guard, '_boundary_enabled', True), patch.object(guard, 'check') as check:
             for event, args in (('open', ('path', 'w', os.O_WRONLY)), ('os.rename', ()),
