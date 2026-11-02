@@ -100,3 +100,15 @@ Before claiming live protection, test blocked admission without operational
 mutation and confirm fresh idle admission, a denied competing local lease,
 nested scripts, durable latching and HTTPS failure on the Pi. Hardware actuation
 is not required for these checks.
+
+`scripts/enrol-pi-maintenance-protection.py` is the narrow first-enrolment
+bootstrap. It requires an explicitly trusted HTTPS URL and expected live YAML
+hash, verifies fresh idle authority under the local flock, and cannot replace an
+existing different URL. It recognises the four existing live operator scripts
+by their read-only inventory hashes, preserves copies in a private backup, and
+installs those four plus the three common helper/module files. It does not
+scatter all historical deployment scripts onto the Pi. Each file boundary and
+the locked config update recheck idle authority. Hardware config and complete
+service PID/restart/unit fingerprints are compared afterwards. A failure leaves
+its backup/evidence for review; it does not restart services or automatically
+roll back through a protected session.

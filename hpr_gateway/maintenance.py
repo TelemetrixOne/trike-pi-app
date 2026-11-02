@@ -138,7 +138,7 @@ def check():
 
 
 @contextmanager
-def admission():
+def admission(checker=None):
     if not hasattr(os, 'geteuid') or os.geteuid() != 0:
         raise MaintenanceBlocked('operator maintenance requires sudo and trusted local state')
     import fcntl
@@ -160,7 +160,7 @@ def admission():
     os.set_inheritable(fd, True)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        check()
+        (checker or check)()
         yield
     except BlockingIOError as exc:
         raise MaintenanceBlocked('another local maintenance operation holds the lock') from exc
