@@ -57,7 +57,8 @@ def main():
             native[module]['metadata_sha256'] = hashlib.sha256(metadata_file.read_bytes()).hexdigest()
     # Register the audited OS binding first so Blinka's dependency resolution
     # recognises it and never tries to compile a second lgpio implementation.
-    subprocess.run([str(python), '-m', 'pip', 'install', '--prefer-binary', '-r', str(requirements)], check=True)
+    from hpr_gateway.maintenance import cancellable_run
+    cancellable_run([str(python), '-m', 'pip', 'install', '--prefer-binary', '-r', str(requirements)])
     subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
     imports = 'import paho.mqtt.client,yaml' + (',bleak,gpiozero,lgpio,adafruit_ads1x15.ads1115' if args.scope == 'all' else '')
     if args.gps_binding: imports += ',gps'
@@ -67,4 +68,9 @@ def main():
                       'native_bindings': native, 'validation': 'pip_check_and_import_only_no_gpio_access'}))
 
 
-if __name__ == '__main__': main()
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from hpr_gateway.maintenance import guarded_main
+    raise SystemExit(guarded_main(main))

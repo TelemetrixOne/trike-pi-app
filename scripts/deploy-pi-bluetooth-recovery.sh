@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Install only isolated HRM scanner recovery, leaving other BLE users untouched.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 MODULE="${INSTALL_ROOT}/hpr_gateway/services/bluetooth_recovery.py"

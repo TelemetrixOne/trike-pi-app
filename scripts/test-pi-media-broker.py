@@ -103,4 +103,9 @@ def main():
             subprocess.run(['systemctl','stop',unit], check=False, capture_output=True, timeout=20)
 
 
-if __name__ == '__main__': main()
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from hpr_gateway.maintenance import guarded_main
+    raise SystemExit(guarded_main(main))

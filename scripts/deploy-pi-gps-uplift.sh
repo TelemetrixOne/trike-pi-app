@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
+
 if [ "$#" -ne 2 ]; then
   echo "Usage: $0 <full-platform-archive.zip> <rendered-trike-config.yaml>" >&2
   exit 2

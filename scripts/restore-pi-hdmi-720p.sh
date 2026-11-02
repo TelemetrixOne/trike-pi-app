@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Restore the shared 720p source while retaining the 800x600 stream canvas.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT=/opt/hpr/gateway

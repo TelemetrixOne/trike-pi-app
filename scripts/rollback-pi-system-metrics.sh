@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
 BACKUP="$(realpath "${1:?Supply the system-metrics backup directory}")"
 [[ "$BACKUP" == /opt/hpr/backups/system-metrics-* && -f "$BACKUP/services_health.py" ]] || {

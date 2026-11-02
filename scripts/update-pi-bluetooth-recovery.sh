@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Advance the targeted recovery from 18bc99c, preserving exact live originals.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 RECOVERY="${INSTALL_ROOT}/hpr_gateway/services/bluetooth_recovery.py"

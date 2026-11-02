@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Remove only the demo-show installation and restore any saved predecessors.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 BACKUP_ROOT="${1:-}"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }

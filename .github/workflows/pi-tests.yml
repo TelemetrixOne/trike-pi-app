@@ -12,5 +12,7 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install -r requirements.test.txt
       - run: python -m unittest discover -s tests -q
+      # Exercise real local flock/nested Bash admission with mocked HTTP only.
+      - run: sudo "$(command -v python)" -m unittest tests.test_maintenance -q
       - run: python -m compileall -q hpr_gateway bin scripts
       - run: find scripts bin -name '*.sh' -print0 | xargs -0 -n1 bash -n

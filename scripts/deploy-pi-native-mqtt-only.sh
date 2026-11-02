@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Scoped source replacement. Shared GPIO owner restart can reinitialise outputs.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
 [[ "${1:-}" == --stationary-approved ]] || {
   echo 'Stop: confirm stationary/shared-GPIO-restart approval before using --stationary-approved' >&2

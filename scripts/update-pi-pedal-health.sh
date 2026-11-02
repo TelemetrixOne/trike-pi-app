@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Correct health evidence only: keep the established pedal GATT link intact.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"

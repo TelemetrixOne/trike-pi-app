@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Scoped, reversible deployment of the camera-only HDMI path and demo listener.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 CONFIG_PATH="${HPR_CONFIG_PATH:-/etc/hpr/hpr.yaml}"

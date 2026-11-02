@@ -75,6 +75,8 @@ def run_demo(config, timeout=45.0, client=None, request_id=None, output=print):
                 output(f"MQTT {kind}: {detail}; demo not requested.")
                 return 2
 
+        from hpr_gateway.maintenance import recheck_if_guarded
+        recheck_if_guarded()
         issued = time.time()
         payload = json.dumps({'schema_version': 1, 'action': 'START', 'request_id': request_id,
                               'issued_at': issued, 'expires_at': issued + 5})
@@ -133,4 +135,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from hpr_gateway.maintenance import guarded_main
+    raise SystemExit(guarded_main(main))

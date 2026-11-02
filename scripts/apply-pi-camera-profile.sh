@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Apply only the local picture profile, preserving the original and all services.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root' >&2; exit 1; }
 PROFILE="$(realpath "${1:?Supply a camera-controls YAML profile}")"
 CONFIG=/etc/hpr/camera-controls.yaml

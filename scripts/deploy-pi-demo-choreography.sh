@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Only update the idle demo listener and its console command. Never run a show.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT=/opt/hpr/gateway
 BACKUP="/opt/hpr/backups/demo-choreography-$(date -u +%Y%m%dT%H%M%SZ)"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Targeted HRM handover deploy; never replaces unrelated /opt/hpr files.
 set -euo pipefail
+
+# Refuse operator maintenance while centrally session-protected.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pi-maintenance-guard.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${HPR_INSTALL_ROOT:-/opt/hpr/gateway}"
 HRM="${INSTALL_ROOT}/hpr_gateway/services/heart_rate.py"
