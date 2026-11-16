@@ -1,5 +1,4 @@
 import queue
-import json
 import threading
 import time
 import unittest
@@ -15,41 +14,6 @@ from hpr_gateway.services import gpio_control as gpio
 
 
 class GpioReliabilityTests(unittest.TestCase):
-    def test_relay_report_keeps_output_and_independent_feedback_separate(self):
-        service = object.__new__(gpio.GPIOControlService)
-        service._mqtt_connected = True
-        service._relay_report_boot_id = 'test-boot'
-        service._relay_report_due = 0
-        service._relay_report_seq = 0
-        headlight = SimpleNamespace(config=SimpleNamespace(name='headlight', trike='test', control_type=gpio.HEADLIGHT_MODE),
-                                    output=SimpleNamespace(value=False), requested_state='ON', mode='AUTO', source='AUTO')
-        class UnreadableOutput:
-            @property
-            def value(self):
-                raise OSError('pin unavailable')
-        horn = SimpleNamespace(config=SimpleNamespace(name='horn', trike='test', control_type='binary'),
-                               output=UnreadableOutput(), requested_state='OFF', mode=None, source='REMOTE')
-        service._circuits = {'test:headlight': headlight, 'test:horn': horn}
-        sensor = object()
-        service._sense_inputs = {'test:headlamp': sensor}
-        service._sense_input_state = Mock(return_value='ON')
-        service._publish = Mock()
-        with patch.dict(gpio.MQTT, {'relay_status_topic': 'test/report'}):
-            service._publish_relay_report(10)
-            service._publish_relay_report(11)
-        service._publish.assert_called_once()
-        topic, payload = service._publish.call_args.args
-        report = json.loads(payload)
-        self.assertEqual('test/report', topic)
-        self.assertEqual({'retain': False, 'qos': 1}, service._publish.call_args.kwargs)
-        self.assertEqual(('test-boot', 1), (report['boot_id'], report['seq']))
-        self.assertEqual({'requested_state': 'ON', 'mode': 'AUTO', 'effective_state': 'OFF',
-                          'source': 'AUTO', 'feedback_input': 'headlamp', 'feedback_state': 'ON'},
-                         report['relays']['headlight'])
-        self.assertIsNone(report['relays']['horn']['effective_state'])
-        self.assertIsNone(report['relays']['horn']['feedback_state'])
-        service._sense_input_state.assert_called_once_with(sensor)
-
     def test_noisy_switch_never_requests_interrupts_and_requires_stable_samples(self):
         previous = Device.pin_factory
         Device.pin_factory = MockFactory()
@@ -193,7 +157,6 @@ class GpioReliabilityTests(unittest.TestCase):
     def test_main_control_timer_expires_horn_without_reading_adc(self):
         service = object.__new__(gpio.GPIOControlService)
         service._stop = False
-        service._mqtt_connected = False
         service._client = Mock()
         service._telemetry = Mock()
         service._telemetry.tick.side_effect = AssertionError("ADC cannot run on control owner")

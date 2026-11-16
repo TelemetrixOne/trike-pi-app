@@ -22,7 +22,6 @@ import socket
 import sys
 import threading
 import time
-import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, Optional
@@ -32,7 +31,6 @@ from gpiozero import InputDevice, OutputDevice, PWMOutputDevice
 
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
 from hpr_gateway.drs_protocol import DRSClock, DRSProtocol
-from hpr_gateway.credential_reload import CredentialReload
 
 MQTT: dict = {}
 SERVICE: dict = {}
@@ -61,8 +59,6 @@ POSITION_AUTO = "AUTO"
 POSITION_OFF = "OFF"
 
 HORN_REMOTE_PULSE_SECONDS = 1.0
-RELAY_REPORT_SECONDS = 5.0
-RELAY_FEEDBACK_INPUTS = {"headlight": "headlamp", "aux_lights": "aux_lights", "demister": "demister"}
 
 
 def configure(config: HprConfig) -> None:
@@ -82,7 +78,6 @@ def configure(config: HprConfig) -> None:
         "client_id": f"{config.trike_id}_control_gateway",
         "topic_root": config.topic_root,
         "gpio_evidence_topic": f"{config.resolve_topic(config.get('health.base_topic'), 'pi')}/gpio_evidence",
-        "relay_status_topic": config.topic("control", "relays", "status"),
         "qos": int(service.get("qos", 1)),
         "retain_state": bool(service.get("retain_state", True)),
     }
@@ -629,9 +624,6 @@ class GPIOControlService:
         self._drs: Optional[DRSRuntime] = None
         self._drs_lock = threading.RLock()
         self._mqtt_connected = False
-        self._relay_report_boot_id = str(uuid.uuid4())
-        self._relay_report_seq = 0
-        self._relay_report_due = 0.0
         self._events = queue.Queue(maxsize=64)
         self._telemetry = TelemetryMonitor(self._client, self._publish)
         self._configure_gpio()
@@ -1151,7 +1143,6 @@ class GPIOControlService:
             self._publish_runtime(runtime)
 
     def _publish_runtime(self, runtime: CircuitRuntime) -> None:
-        self._relay_report_due = 0.0
         trike = runtime.config.trike
         name = runtime.config.name
         base = self._base_topic(trike, name)
@@ -1165,45 +1156,9 @@ class GPIOControlService:
         runtime.last_switch_state = switch_state
 
     def _publish_sense_input(self, runtime: SenseInputRuntime) -> None:
-        if runtime.config.name in RELAY_FEEDBACK_INPUTS.values():
-            self._relay_report_due = 0.0
         payload = self._sense_input_state(runtime)
         self._publish(self._sense_topic(runtime.config.trike, runtime.config.name), payload)
         runtime.last_state = payload
-
-    def _publish_relay_report(self, now: float) -> None:
-        if not self._mqtt_connected or now < self._relay_report_due:
-            return
-        relays = {}
-        for runtime in self._circuits.values():
-            name = runtime.config.name
-            feedback_name = RELAY_FEEDBACK_INPUTS.get(name)
-            sensor = self._sense_inputs.get(self._key(runtime.config.trike, feedback_name)) if feedback_name else None
-            try:
-                output = STATE_ON if runtime.output.value else STATE_OFF
-            except Exception:
-                output = None
-            try:
-                feedback = self._sense_input_state(sensor) if sensor is not None else None
-            except Exception:
-                feedback = None
-            relays[name] = {
-                "requested_state": runtime.requested_state,
-                "mode": runtime.mode if self._is_headlight_mode(runtime) else None,
-                "effective_state": output,
-                "source": runtime.source,
-                "feedback_input": feedback_name if sensor is not None else None,
-                "feedback_state": feedback,
-            }
-        self._relay_report_seq += 1
-        self._relay_report_due = now + RELAY_REPORT_SECONDS
-        self._publish(MQTT["relay_status_topic"], json.dumps({
-            "schema_version": 1,
-            "boot_id": self._relay_report_boot_id,
-            "seq": self._relay_report_seq,
-            "published_at": time.time(),
-            "relays": relays,
-        }), retain=False, qos=1)
 
     def _publish_all_states(self) -> None:
         for runtime in self._circuits.values():
@@ -1300,7 +1255,6 @@ class GPIOControlService:
             if kind == "command":
                 self._handle_message(message)
             elif kind == "connected":
-                self._relay_report_due = 0.0
                 if SERVICE["republish_state_on_reconnect"]:
                     self._publish_all_states()
                     self._telemetry.publish_latest()
@@ -1381,9 +1335,6 @@ class GPIOControlService:
             self._drs_clock.start()
         self._client.connect_async(MQTT["host"], MQTT["port"], keepalive=60)
         self._client.loop_start()
-        reload_worker = getattr(self, '_credential_reload', None)
-        if reload_worker is not None:
-            reload_worker.thread.start()
         self._publish_all_states()
         self._telemetry.start()
         next_gpio_evidence = 0.0
@@ -1405,11 +1356,8 @@ class GPIOControlService:
                     elif runtime.config.switch_mode == MODE_THREE_POSITION and runtime.config.auto_enabled:
                         if self._three_position_state(runtime) == POSITION_AUTO:
                             self._apply_logic(runtime, publish=False)
-                self._publish_relay_report(now)
                 time.sleep(float(SERVICE["poll_interval_seconds"]))
         finally:
-            if reload_worker is not None:
-                reload_worker.stop()
             if getattr(self, '_drs_clock', None) is not None:
                 self._drs_clock.stop()
             self._telemetry.stop()
@@ -1450,7 +1398,6 @@ def main() -> int:
     configure(config)
     _setup_logging()
     service = GPIOControlService()
-    service._credential_reload = CredentialReload(service._client, config)
 
     notify_socket = os.environ.get("NOTIFY_SOCKET")
     if notify_socket:
@@ -1465,8 +1412,6 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
-    if hasattr(signal, 'SIGHUP'):
-        signal.signal(signal.SIGHUP, lambda *_: service._credential_reload.requested.set())
     return service.start()
 
 
