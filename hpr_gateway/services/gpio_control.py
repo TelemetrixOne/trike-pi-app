@@ -31,6 +31,7 @@ from gpiozero import InputDevice, OutputDevice, PWMOutputDevice
 
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
 from hpr_gateway.drs_protocol import DRSClock, DRSProtocol
+from hpr_gateway.credential_reload import CredentialReload
 
 MQTT: dict = {}
 SERVICE: dict = {}
@@ -1335,6 +1336,9 @@ class GPIOControlService:
             self._drs_clock.start()
         self._client.connect_async(MQTT["host"], MQTT["port"], keepalive=60)
         self._client.loop_start()
+        reload_worker = getattr(self, '_credential_reload', None)
+        if reload_worker is not None:
+            reload_worker.thread.start()
         self._publish_all_states()
         self._telemetry.start()
         next_gpio_evidence = 0.0
@@ -1358,6 +1362,8 @@ class GPIOControlService:
                             self._apply_logic(runtime, publish=False)
                 time.sleep(float(SERVICE["poll_interval_seconds"]))
         finally:
+            if reload_worker is not None:
+                reload_worker.stop()
             if getattr(self, '_drs_clock', None) is not None:
                 self._drs_clock.stop()
             self._telemetry.stop()
@@ -1398,6 +1404,7 @@ def main() -> int:
     configure(config)
     _setup_logging()
     service = GPIOControlService()
+    service._credential_reload = CredentialReload(service._client, config)
 
     notify_socket = os.environ.get("NOTIFY_SOCKET")
     if notify_socket:
@@ -1412,6 +1419,8 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, lambda *_: service._credential_reload.requested.set())
     return service.start()
 
 
