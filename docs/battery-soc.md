@@ -98,13 +98,30 @@ with private devices/network, read-only system files and mock GPIO. The state
 directory was created with mode 0700 and admin ownership.
 
 CGS web code `45913c2` was deployed, and its central Trike 1 profile was enabled
-with the implicit reference curve. The Pi subsequently became unreachable on
-SSH, RTSP and Tailscale (last seen 19 November 21:00 UTC). Its last observed
-applied profile was still the previous hash, so new-profile acknowledgement and
-live estimator acceptance remain pending. No battery-reset command was sent.
-The operator confirmed the primary connected and spare removed, authorising
-one end-to-end button test when fresh compatible Pi status returns. The active
-8095 trial instance was not deployed during this operation.
+with the implicit reference curve. The Pi temporarily became unreachable on
+SSH, RTSP and Tailscale. After the operator restored connectivity, supported
+configuration sync applied profile
+`2e39cce77dc94b99d24f643e5c4e42ca13579f32990813c64b304dc9c2d10ea5`.
+Independent read-back confirmed that only `gpio.adc.battery_soc` and the profile
+hash changed from the installation backup. Fresh nonretained status reported
+clock synchronisation and a ready reference estimate.
+
+The operator explicitly confirmed primary connected/spare removed and approved
+one test. A single authenticated TM1 API request used UUID
+`c0a90a5c-7b98-4281-b3e6-23710c8551e5`. TM1 observed matching completion at
+19.538 V / 75.8%, followed by resumed consumption. Independent Pi subscription
+verified the same completed UUID, fresh timestamp, QoS 1/nonretained delivery,
+increasing sequence, and exactly one durable journal claim. GPIO remained
+active without an automatic restart during the command. Its only planned
+restarts were capability installation and central profile activation; the full
+configuration-sync owner restarted once during installation.
+
+Final GPIO and camera health were Good. Separate sensor health reported GPS
+recovery unsuccessful and stale pedal/TPMS notifications after reconnection;
+HRM showed restart activity and no recent rider reading. Those services were
+outside this source change. HDMI was disconnected. Pack/load calibration and
+physical power-path protection review remain outstanding. The active 8095
+trial instance was not deployed during this operation.
 
 Compare Pi voltage with a multimeter at full charge and at several discharge
 points under representative trike loads. Establish the relationship to actual
