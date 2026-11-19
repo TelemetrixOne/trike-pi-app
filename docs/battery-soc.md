@@ -82,13 +82,29 @@ The configured MQTT identity supplies the topic root and trike ID.
 
 ## Commissioning and deployment
 
-The Pi was unreachable during implementation. Live source alignment and
-hardware acceptance remain unverified. `scripts/deploy-pi-battery-soc.sh` is the
+The Pi was unreachable during implementation. `scripts/deploy-pi-battery-soc.sh` is the
 repository rollout entrypoint, using idle admission, pinned baseline hashes,
 private backups and explicit stationary restart approval. It installs the
 capability and journal directory drop-in, then restarts only GPIO and the full
 configuration-sync owner. Central activation follows verified source readiness.
 The script preserves the live YAML; it does not enable the feature locally.
+
+On 20 November, the live Pi matched the pinned baseline and accepted idle
+maintenance. Code `1a7eedc` was installed with backup
+`/opt/hpr/backups/battery-soc-20261119T205237Z`. GPIO and the full configuration
+sync owner restarted; other HPR process fingerprints and the live YAML were
+preserved. All 16 battery regression tests passed on the Pi in a transient unit
+with private devices/network, read-only system files and mock GPIO. The state
+directory was created with mode 0700 and admin ownership.
+
+CGS web code `45913c2` was deployed, and its central Trike 1 profile was enabled
+with the implicit reference curve. The Pi subsequently became unreachable on
+SSH, RTSP and Tailscale (last seen 19 November 21:00 UTC). Its last observed
+applied profile was still the previous hash, so new-profile acknowledgement and
+live estimator acceptance remain pending. No battery-reset command was sent.
+The operator confirmed the primary connected and spare removed, authorising
+one end-to-end button test when fresh compatible Pi status returns. The active
+8095 trial instance was not deployed during this operation.
 
 Compare Pi voltage with a multimeter at full charge and at several discharge
 points under representative trike loads. Establish the relationship to actual
