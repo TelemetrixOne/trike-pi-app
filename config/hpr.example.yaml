@@ -276,6 +276,15 @@ gpio:
     battery_empty_soc_pct: 26.0
     battery_soc_warning_percent: 10.0
     battery_soc_critical_percent: 5.0
+    # Centrally selected estimate; reference curve requires pack/load validation.
+    battery_soc:
+      enabled: false
+      profile: liion_5s_reference
+      stable_seconds: 5
+      stable_spread_v: 0.15
+      valid_min_voltage: 12.5
+      valid_max_voltage: 21.5
+      filter_seconds: 10
     light_dark_voltage: 1.95
     light_bright_voltage: 3.13
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import queue
 import signal
@@ -22,6 +23,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, Optional
@@ -32,6 +34,9 @@ from gpiozero import InputDevice, OutputDevice, PWMOutputDevice
 from hpr_gateway.config import HprConfig, config_arg_parser, enabled_items, load_config
 from hpr_gateway.drs_protocol import DRSClock, DRSProtocol
 from hpr_gateway.credential_reload import CredentialReload
+from hpr_gateway.battery_soc import BatteryEstimator
+from hpr_gateway.battery_protocol import parse_swap_request
+from hpr_gateway.demo_protocol import DemoJournal, request_identity
 
 MQTT: dict = {}
 SERVICE: dict = {}
@@ -79,6 +84,8 @@ def configure(config: HprConfig) -> None:
         "client_id": f"{config.trike_id}_control_gateway",
         "topic_root": config.topic_root,
         "gpio_evidence_topic": f"{config.resolve_topic(config.get('health.base_topic'), 'pi')}/gpio_evidence",
+        "battery_command_topic": config.topic('control', 'battery', 'command'),
+        "battery_status_topic": config.topic('control', 'battery', 'status'),
         "qos": int(service.get("qos", 1)),
         "retain_state": bool(service.get("retain_state", True)),
     }
@@ -116,6 +123,7 @@ def configure(config: HprConfig) -> None:
         "negative_current_noise_floor_a": float(adc.get("negative_current_noise_floor_a", 0.1)),
         "soc_coulomb_weight": float(adc.get("soc_coulomb_weight", 0.85)),
         "soc_voltage_weight": float(adc.get("soc_voltage_weight", 0.15)),
+        "battery_soc": adc.get('battery_soc', {}),
     }
     AMBIENT_AUTO = ambient_light.get("automatic_headlights", {}) or {}
 
@@ -328,6 +336,16 @@ class TelemetryMonitor:
         self._worker = None
         self._stopping = threading.Event()
         self._last_sample_monotonic = None
+        soc_config = ADC.get('battery_soc', {})
+        self._battery = BatteryEstimator(soc_config, self._sample_interval_sec) if soc_config.get('enabled', False) else None
+        self._battery_requests = queue.Queue(maxsize=8)
+        self._battery_clock = DRSClock() if self._battery is not None else None
+        self._battery_boot_id = str(uuid.uuid4())
+        self._battery_seq = 0
+        self._battery_publish_due = 0.0
+        self._battery_status_key = None
+        self._battery_journal = None
+        self._last_battery_snapshot = None
 
     @property
     def enabled(self) -> bool:
@@ -413,9 +431,67 @@ class TelemetryMonitor:
                 time.monotonic() - self._last_sample_monotonic <= max(3.0, self._sample_interval_sec * 3))
 
     def publish_latest(self) -> None:
+        self._battery_publish_due = 0.0
         if self._sample_fresh():
             for key, payload in dict(self._last_published).items():
+                if (self._battery is not None and key in ('soc', 'battery_voltage')
+                        and (self._last_battery_snapshot is None or self._last_battery_snapshot['soc_pct'] is None)):
+                    continue
                 self._publish(f"{self._topic_root()}/{key}", payload)
+
+    def queue_battery_swap(self, message) -> None:
+        if self._battery is None:
+            return
+        try:
+            self._battery_requests.put_nowait((bytes(message.payload[:2049]), bool(message.retain)))
+        except queue.Full:
+            LOG.warning('Battery swap request queue full')
+
+    def _publish_battery_status(self, override=None) -> None:
+        if self._battery is None:
+            return
+        snapshot = self._battery.snapshot() if override is None else override
+        key = (snapshot['state'], snapshot.get('reason'), snapshot.get('request_id'))
+        now = time.monotonic()
+        if override is None and key == self._battery_status_key and now < self._battery_publish_due:
+            return
+        self._battery_seq += 1
+        self._publish(MQTT['battery_status_topic'], json.dumps({
+            'schema_version': 1, 'boot_id': self._battery_boot_id, 'seq': self._battery_seq,
+            'published_at': time.time(), 'clock_ready': self._battery_clock.ready,
+            **snapshot,
+        }), retain=False, qos=1)
+        if override is None:
+            self._last_battery_snapshot = snapshot
+            self._battery_status_key = key
+            self._battery_publish_due = now + 5
+
+    def _process_battery_requests(self) -> None:
+        if self._battery is None:
+            return
+        self._battery.poll(time.monotonic())
+        try:
+            payload, retained = self._battery_requests.get_nowait()
+        except queue.Empty:
+            return
+        identity = request_identity(payload)
+        try:
+            command = parse_swap_request(payload, retained, time.time(), self._battery_clock.ready)
+            identity = command['request_id']
+            if identity == self._battery.request_id:
+                self._battery_publish_due = 0
+                return
+            if self._battery.pending_until is not None:
+                raise ValueError('battery_swap_already_settling')
+            if self._battery_journal is None:
+                self._battery_journal = DemoJournal('/var/lib/hpr-battery-soc/requests.sqlite3')
+            if not self._battery_journal.claim(identity):
+                raise ValueError('request_already_processed')
+            self._battery.request_swap(identity, time.monotonic())
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ValueError) else 'battery_request_journal_unavailable'
+            self._publish_battery_status({**self._battery.snapshot(), 'request_id': identity,
+                                          'state': 'rejected', 'reason': reason})
 
     def health_snapshot(self) -> dict:
         age = (time.monotonic() - self._last_sample_monotonic
@@ -428,6 +504,8 @@ class TelemetryMonitor:
         if not self._enabled:
             LOG.info("Telemetry disabled in config")
             return
+        if self._battery_clock is not None:
+            self._battery_clock.start()
         self._worker = threading.Thread(target=self._run, name="gpio-adc", daemon=True)
         self._worker.start()
 
@@ -435,7 +513,9 @@ class TelemetryMonitor:
         try:
             self._try_initialise(force=True)
             while not self._stopping.is_set():
+                self._process_battery_requests()
                 self.tick()
+                self._publish_battery_status()
                 self._stopping.wait(0.05)
         finally:
             self._close_hardware()
@@ -486,7 +566,7 @@ class TelemetryMonitor:
 
             initial_batt_adc = battery_chan.voltage
             initial_batt_voltage = self.battery_voltage_from_adc(initial_batt_adc)
-            initial_soc_voltage = self.soc_from_voltage(initial_batt_voltage)
+            initial_soc_voltage = self.soc_from_voltage(initial_batt_voltage) if self._battery is None else None
 
             self._ads = ads
             self._shunt_diff = shunt_diff
@@ -498,15 +578,17 @@ class TelemetryMonitor:
             self._current_samples.clear()
             self._light_samples.clear()
             self._light_voltage_samples.clear()
-            self._battery_voltage_samples.append(initial_batt_voltage)
+            if self._battery is None:
+                self._battery_voltage_samples.append(initial_batt_voltage)
             self._light_samples.append(self.light_percent_from_voltage(light_chan.voltage))
             self._light_voltage_samples.append(float(light_chan.voltage))
             self._current_samples.append(0.0)
             self._last_sample_monotonic = time.monotonic()
 
-            capacity = float(ADC["battery_capacity_ah"])
-            self._remaining_ah = capacity * (initial_soc_voltage / 100.0)
-            self._ah_used = capacity - self._remaining_ah
+            if self._battery is None:
+                capacity = float(ADC["battery_capacity_ah"])
+                self._remaining_ah = capacity * (initial_soc_voltage / 100.0)
+                self._ah_used = capacity - self._remaining_ah
             self._last_time_monotonic = now
             self._next_sample_due_monotonic = now
 
@@ -514,9 +596,9 @@ class TelemetryMonitor:
                 LOG.info("Telemetry recovered after previous failure")
             self._last_init_error = None
             LOG.info(
-                "Telemetry initialised: battery=%.2f V, startup_soc=%.1f%%, ADS addr=%s",
+                "Telemetry initialised: battery=%.2f V, startup_soc=%s, ADS addr=%s",
                 initial_batt_voltage,
-                initial_soc_voltage,
+                f'{initial_soc_voltage:.1f}%' if initial_soc_voltage is not None else 'settling',
                 ADC["i2c_address"],
             )
         except Exception as exc:
@@ -553,6 +635,10 @@ class TelemetryMonitor:
             current_a = self.shunt_current_from_voltage(v_shunt)
             battery_v = self.battery_voltage_from_adc(v_batt_adc)
             light_pct = self.light_percent_from_voltage(v_light)
+
+            if self._battery is not None:
+                self._sample_battery_curve(battery_v, current_a, v_light, light_pct, now)
+                return
 
             if bool(ADC["discharge_only"]) and current_a < 0 and abs(current_a) < float(ADC["negative_current_noise_floor_a"]):
                 current_a = 0.0
@@ -603,9 +689,35 @@ class TelemetryMonitor:
             self._battery_chan = None
             self._light_chan = None
             self._last_init_error = str(exc)
+            if self._battery is not None:
+                self._battery.invalidate('battery_adc_read_failed')
+
+    def _sample_battery_curve(self, voltage, current, light_voltage, light_pct, now) -> None:
+        self._battery.update(voltage, current, now)
+        snapshot = self._battery.snapshot()
+        self._light_samples.append(light_pct)
+        self._light_voltage_samples.append(light_voltage)
+        self._last_sample_monotonic = time.monotonic()
+        values = {'ambient_light_voltage': f'{light_voltage:.3f}',
+                  'ambient_light_pct': f'{sum(self._light_samples) / len(self._light_samples):.1f}'}
+        if snapshot['voltage_v'] is not None:
+            values['battery_voltage'] = f"{snapshot['voltage_v']:.3f}"
+        if snapshot['soc_pct'] is not None:
+            values['soc'] = f"{snapshot['soc_pct']:.1f}"
+        if math.isfinite(current):
+            values['current_a'] = f'{current:.3f}'
+            if snapshot['voltage_v'] is not None:
+                values['power_w'] = f"{snapshot['voltage_v'] * current:.3f}"
+        values['ah_used'] = f"{self._battery.ah_used:.4f}"
+        for key, payload in values.items():
+            if self._last_published.get(key) != payload:
+                self._publish(f'{self._topic_root()}/{key}', payload)
+                self._last_published[key] = payload
 
     def stop(self) -> None:
         self._stopping.set()
+        if self._battery_clock is not None:
+            self._battery_clock.stop()
         if self._worker is not None:
             self._worker.join(timeout=1)
         self._hardware_ready = False
@@ -1265,6 +1377,8 @@ class GPIOControlService:
         self._mqtt_connected = not (reason_code.is_failure if hasattr(reason_code, "is_failure") else reason_code != 0)
         if not self._mqtt_connected:
             return
+        if self._telemetry.enabled and ADC.get('battery_soc', {}).get('enabled', False):
+            client.subscribe(MQTT['battery_command_topic'], qos=1)
         for runtime in self._circuits.values():
             base = self._base_topic(runtime.config.trike, runtime.config.name)
             client.subscribe(f"{base}/set", qos=MQTT["qos"])
@@ -1281,6 +1395,9 @@ class GPIOControlService:
         self._queue_event("command", msg)
 
     def _handle_message(self, msg) -> None:
+        if msg.topic == MQTT.get('battery_command_topic'):
+            self._telemetry.queue_battery_swap(msg)
+            return
         if (getattr(self, '_drs', None) is not None and
                 msg.topic == f"{MQTT.get('topic_root', 'hpr')}/{DRS['trike']}/control/drs/command"):
             self._handle_drs_command(msg)

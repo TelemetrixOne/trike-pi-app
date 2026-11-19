@@ -424,6 +424,7 @@ install_unit() {
   case "${module}" in
     health_agent) state_directory="StateDirectory=hpr-health-agent" ;;
     demo_show) state_directory="StateDirectory=hpr-demo-show" ;;
+    gpio_control) state_directory="StateDirectory=hpr-battery-soc" ;;
   esac
   if [ "${module}" = "heart_rate" ]; then
     exec_start_pre="ExecStartPre=+${VENV_DIR}/bin/python -m hpr_gateway.bluetooth_power --config ${CONFIG_PATH} --role heart_rate"

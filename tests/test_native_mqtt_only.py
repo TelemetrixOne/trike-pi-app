@@ -30,7 +30,8 @@ class NativeMqttOnlyTests(unittest.TestCase):
         self.addCleanup(self._restore, previous)
         gpio.configure(config())
         self.assertEqual(set(gpio.MQTT), {'host', 'port', 'username', 'password', 'client_id',
-                                         'topic_root', 'gpio_evidence_topic', 'qos', 'retain_state'})
+                                         'topic_root', 'gpio_evidence_topic', 'qos', 'retain_state',
+                                         'battery_command_topic', 'battery_status_topic'})
         self.assertEqual(set(gpio.SERVICE), {'republish_state_on_reconnect',
                                             'poll_interval_seconds', 'log_level'})
 

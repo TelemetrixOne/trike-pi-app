@@ -5,6 +5,8 @@ import json
 import math
 import re
 
+from .battery_soc import validate_soc_config
+
 
 def profile_hash(profile):
     return hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":"),
@@ -28,6 +30,13 @@ def validate_gpio(gpio, *, strict=False):
     average = (gpio.get("telemetry") or {}).get("moving_average_samples", 5)
     if type(average) is not int or not 1 <= average <= 100:
         raise ValueError("gpio.telemetry.moving_average_samples must be an integer from 1 to 100")
+    battery_soc = (gpio.get('adc') or {}).get('battery_soc')
+    if battery_soc is not None:
+        validate_soc_config(battery_soc)
+        if battery_soc.get('enabled'):
+            sample_seconds = (gpio.get('telemetry') or {}).get('sample_interval_seconds', 1)
+            if sample_seconds > battery_soc.get('stable_seconds', 5) / 4:
+                raise ValueError('Battery SOC needs at least five samples in its stable window')
     used = {}
 
     def pin(value, path):
