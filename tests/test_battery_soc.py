@@ -111,6 +111,23 @@ class BatterySocTests(unittest.TestCase):
         self.assertEqual('rejected', estimator.state)
         self.assertIsNone(estimator.snapshot()['soc_pct'])
 
+    def test_unstable_swap_timeout_stays_rejected_until_explicit_retry(self):
+        estimator = self.estimator()
+        self.settle(estimator, 18)
+        estimator.ah_used = 2
+        estimator.request_swap('unstable', 10)
+        for second in range(10, 40):
+            estimator.update(18 if second % 2 else 20, 0, second)
+        estimator.poll(40)
+        estimator.poll(50)
+        self.settle(estimator, 20, 51)
+        self.assertEqual('rejected', estimator.state)
+        self.assertEqual(2, estimator.ah_used)
+        self.assertIsNone(estimator.snapshot()['soc_pct'])
+        estimator.request_swap('retry', 60)
+        self.settle(estimator, 20, 60)
+        self.assertEqual('completed', estimator.state)
+
     def test_curve_and_timing_configuration_rejects_mistakes(self):
         for config in ({'enabled': 1}, {'profile': 'unknown'}, {'filter_seconds': 0},
                        {'stable_spread_v': float('nan')}, {'unexpected': 2},

@@ -113,6 +113,8 @@ class BatteryEstimator:
         self.filtered_voltage = None
 
     def poll(self, now):
+        if self.state == 'rejected' and self.pending_until is None:
+            return
         if self.pending_until is not None and now >= self.pending_until:
             self.pending_until = None
             self.initialised = False
