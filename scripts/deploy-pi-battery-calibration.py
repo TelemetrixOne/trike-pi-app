@@ -37,6 +37,8 @@ def main():
     parser.add_argument('--stationary-restart-approved', action='store_true', required=True)
     parser.add_argument('--stationary-prestart-approved', action='store_true',
                         help='Explicit operator exception for this battery repair before an armed race; never for an active race')
+    parser.add_argument('--defer-restart-to-profile-activation', action='store_true',
+                        help='Stage code first; the subsequent supported central profile change performs the single GPIO restart')
     args = parser.parse_args()
     identity, url = trusted_config()
     def preflight():
@@ -70,7 +72,8 @@ def main():
                 target = ROOT/name;temporary = target.with_suffix('.soc-new')
                 temporary.write_bytes(new);temporary.chmod(0o644);temporary.replace(target)
             preflight()
-            subprocess.run(['systemctl', 'restart', 'hpr-gpio-control'], check=True)
+            if not args.defer_restart_to_profile_activation:
+                subprocess.run(['systemctl', 'restart', 'hpr-gpio-control'], check=True)
             subprocess.run(['systemctl', 'is-active', '--quiet', 'hpr-gpio-control'], check=True)
             assert Path('/etc/hpr/hpr.yaml').read_bytes() == config, 'Configuration changed during code deployment'
             assert fingerprint() == before, 'An unrelated service changed during deployment'
@@ -80,7 +83,8 @@ def main():
             preflight()
             subprocess.run(['systemctl', 'restart', 'hpr-gpio-control'], check=True)
             raise
-        receipt = dict(backup=str(backup), files=list(incoming), restarted=['hpr-gpio-control'],
+        receipt = dict(backup=str(backup), files=list(incoming), restarted=[] if args.defer_restart_to_profile_activation else ['hpr-gpio-control'],
+                       activation_pending=args.defer_restart_to_profile_activation,
                        configuration_unchanged=True, unrelated_services_unchanged=True,
                        operator_prestart_approval=args.stationary_prestart_approved)
         (backup/'receipt.json').write_text(json.dumps(receipt, indent=2))
