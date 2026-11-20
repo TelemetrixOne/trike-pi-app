@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "profile": "liion_5s_reference",
+  "voltage_soc_curve": [[12.6, 0], [15.15, 5], [15.67, 10], [16.35, 25], [17.31, 50], [18.24, 75], [18.38, 80], [18.74, 90], [20.18, 100]],
+  "stable_seconds": 5,
+  "stable_spread_v": 0.15,
+  "valid_min_voltage": 12.5,
+  "valid_max_voltage": 21.5,
+  "filter_seconds": 10
+}

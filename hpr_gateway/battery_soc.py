@@ -4,8 +4,14 @@ The five-cell curve is an initial lithium-ion reference, not a measured DeWalt
 DCB184 discharge curve. Field calibration is required for percentage accuracy.
 """
 from collections import deque
+import hashlib
+import json
+import logging
 import math
+import os
+from pathlib import Path
 import statistics
+import tempfile
 
 
 REFERENCE_CURVE = ((15.0, 0), (16.5, 5), (17.5, 10), (18.0, 20),
@@ -68,7 +74,7 @@ def voltage_soc(voltage, curve):
 
 
 class BatteryEstimator:
-    def __init__(self, config, sample_seconds=1):
+    def __init__(self, config, sample_seconds=1, *, state_path=None):
         validate_soc_config(config)
         self.curve = config.get('voltage_soc_curve', REFERENCE_CURVE)
         self.quality = 'configured_curve_estimate' if 'voltage_soc_curve' in config else 'reference_estimate'
@@ -90,6 +96,70 @@ class BatteryEstimator:
         self.request_id = None
         self.pending_until = None
         self.initialised = False
+        self.state_path = Path(state_path) if state_path else None
+        self.curve_hash = hashlib.sha256(json.dumps(self.curve).encode()).hexdigest()
+        self.last_checkpoint = None
+        self.saved_soc = None
+        self.checkpoint_retry_after = None
+        self._restore()
+
+    def _restore(self):
+        if self.state_path is None:
+            return
+        try:
+            value = json.loads(self.state_path.read_text())
+            if value['version'] != 1 or value['curve_hash'] != self.curve_hash:
+                return
+            soc, ah = value['soc'], value['ah_used']
+            if not finite_number(soc) or not 0 <= soc <= 100 or not finite_number(ah) or ah < 0:
+                return
+            self.soc, self.ah_used = soc, ah
+            if value.get('swap_pending') or value.get('rejected'):
+                self.state = 'rejected'
+                self.reason = 'battery_swap_requires_explicit_retry'
+            else:
+                self.initialised = True
+                self.reason = 'waiting_for_stable_voltage'
+        except (OSError, ValueError, KeyError, TypeError):
+            # A damaged checkpoint cannot manufacture a usable battery reading.
+            return
+
+    def checkpoint(self, now=None, *, force=False):
+        if self.state_path is None or self.soc is None:
+            return
+        if not force and self.checkpoint_retry_after is not None and now < self.checkpoint_retry_after:
+            return
+        if not force and self.last_checkpoint is not None and now-self.last_checkpoint < 30 and abs(self.soc-self.saved_soc) < 0.5:
+            return
+        value = dict(version=1, curve_hash=self.curve_hash, soc=self.soc,
+                     ah_used=self.ah_used, swap_pending=self.pending_until is not None,
+                     rejected=self.state == 'rejected')
+        temporary = None
+        try:
+            fd, temporary = tempfile.mkstemp(prefix='.estimate-', dir=self.state_path.parent)
+            with os.fdopen(fd, 'w') as stream:
+                json.dump(value, stream, allow_nan=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.state_path)
+            temporary = None
+            if os.name == 'posix':
+                directory = os.open(self.state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            self.last_checkpoint, self.saved_soc = now, self.soc
+            self.checkpoint_retry_after = None
+        except OSError:
+            self.checkpoint_retry_after = now+30 if now is not None else None
+            logging.getLogger(__name__).warning('Battery checkpoint unavailable; live measurements retained')
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def request_swap(self, request_id, now):
         if self.pending_until is not None:
@@ -102,6 +172,7 @@ class BatteryEstimator:
         self.last_sample = None
         self.state = 'settling'
         self.reason = 'waiting_for_stable_voltage'
+        self.checkpoint(now, force=True)
         return True
 
     def invalidate(self, reason):
@@ -121,6 +192,7 @@ class BatteryEstimator:
             self.soc = None
             self.state = 'rejected'
             self.reason = 'voltage_not_stable_before_timeout'
+            self.checkpoint(now, force=True)
             return
         if self.last_sample is not None and now - self.last_sample > self.max_gap:
             self.invalidate('battery_measurement_stale')
@@ -172,12 +244,13 @@ class BatteryEstimator:
         else:
             # A load step must not immediately look like a battery replacement.
             limit = 0.5 * delta
-            self.soc += max(-limit, min(limit, estimate - self.soc))
+            self.soc += max(-limit, min(0, estimate - self.soc))
             if self.state in ('invalid', 'stale', 'settling'):
                 self.state = 'ready'
                 self.reason = None
         if finite_number(current) and delta:
             self.ah_used += max(0, current) * delta / 3600
+        self.checkpoint(now)
 
     def snapshot(self):
         usable = self.initialised and self.pending_until is None and self.state in ('ready', 'completed')

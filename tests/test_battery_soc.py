@@ -38,6 +38,86 @@ class BatterySocTests(unittest.TestCase):
         self.assertEqual(60, estimator.snapshot()['soc_pct'])
         self.assertEqual('reference_estimate', estimator.snapshot()['quality'])
 
+    def test_reducing_load_never_increases_soc_until_an_explicit_swap(self):
+        estimator = self.estimator()
+        self.settle(estimator, 18)
+        for second in range(7, 100):
+            estimator.update(21, 0, second)
+        self.assertEqual(20, estimator.soc)
+        estimator.request_swap('replacement', 100)
+        self.settle(estimator, 21, 100)
+        self.assertEqual(100, estimator.soc)
+
+    def test_restart_keeps_usage_and_cannot_rebound_or_display_without_fresh_voltage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'estimate.json'
+            estimator = BatteryEstimator({'enabled': True}, state_path=state)
+            self.settle(estimator, 18)
+            estimator.ah_used = 1.25
+            estimator.checkpoint(7, force=True)
+            restored = BatteryEstimator({'enabled': True}, state_path=state)
+            self.assertIsNone(restored.snapshot()['soc_pct'])
+            self.settle(restored, 21)
+            self.assertEqual(20, restored.soc)
+            self.assertGreaterEqual(restored.ah_used, 1.25)
+            restored.poll(30)
+            self.assertIsNone(restored.snapshot()['soc_pct'])
+
+    def test_unfinished_or_rejected_swap_is_not_completed_by_a_restart(self):
+        for timeout in [False, True]:
+            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)/'estimate.json'
+                estimator = BatteryEstimator({'enabled': True}, state_path=state)
+                self.settle(estimator, 18)
+                estimator.request_swap('replacement', 10)
+                if timeout:
+                    estimator.poll(41)
+                restored = BatteryEstimator({'enabled': True}, state_path=state)
+                self.settle(restored, 21)
+                self.assertEqual('rejected', restored.state)
+                self.assertIsNone(restored.snapshot()['soc_pct'])
+
+    def test_invalid_or_different_curve_checkpoint_cannot_manufacture_a_reading(self):
+        for value in ['broken', '{"version":1}', 'null']:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)/'estimate.json';state.write_text(value)
+                restored = BatteryEstimator({'enabled': True}, state_path=state)
+                self.assertIsNone(restored.snapshot()['soc_pct'])
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'estimate.json'
+            estimator = BatteryEstimator({'enabled': True}, state_path=state)
+            self.settle(estimator, 18)
+            changed = BatteryEstimator({'enabled': True, 'voltage_soc_curve': [[15, 0], [18, 50], [21, 100]]}, state_path=state)
+            self.assertIsNone(changed.snapshot()['soc_pct'])
+            self.settle(changed, 18)
+            self.assertEqual(50, changed.soc)
+
+    def test_calibrated_curve_matches_recorded_points_and_interpolates(self):
+        profile = json.loads((Path(__file__).parents[1]/'config/calibrations/trike1-battery-20261121.json').read_text())
+        curve = profile['voltage_soc_curve']
+        for voltage, percentage in curve:
+            self.assertAlmostEqual(percentage, voltage_soc(voltage, curve))
+        self.assertAlmostEqual(62.5, voltage_soc((17.31+18.24)/2, curve))
+        self.assertTrue(85 < voltage_soc(18.6, curve) < 90)
+        estimator = BatteryEstimator(profile)
+        self.settle(estimator, 20.183)
+        self.assertEqual(100, estimator.snapshot()['soc_pct'])
+        self.assertEqual('configured_curve_estimate', estimator.snapshot()['quality'])
+
+    def test_unwritable_checkpoint_does_not_break_sampling_or_retry_every_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'estimate.json'
+            estimator = BatteryEstimator({'enabled': True}, state_path=state)
+            with patch('hpr_gateway.battery_soc.tempfile.mkstemp', side_effect=PermissionError) as write:
+                self.settle(estimator, 19)
+                for second in range(7, 20):
+                    estimator.update(19, 1, second)
+                self.assertEqual(1, write.call_count)
+                self.assertEqual(60, estimator.snapshot()['soc_pct'])
+            estimator.update(19, 1, 36)
+            self.settle(estimator, 19, 37)
+            self.assertTrue(state.exists())
+
     def test_explicit_swap_discards_previous_consumption_only_after_stable_voltage(self):
         estimator = self.estimator()
         self.settle(estimator, 18)

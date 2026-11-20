@@ -337,7 +337,8 @@ class TelemetryMonitor:
         self._stopping = threading.Event()
         self._last_sample_monotonic = None
         soc_config = ADC.get('battery_soc', {})
-        self._battery = BatteryEstimator(soc_config, self._sample_interval_sec) if soc_config.get('enabled', False) else None
+        battery_state = '/var/lib/hpr-battery-soc/estimate.json' if '/var/lib/hpr-battery-soc' in os.environ.get('STATE_DIRECTORY', '').split(':') else None
+        self._battery = BatteryEstimator(soc_config, self._sample_interval_sec, state_path=battery_state) if soc_config.get('enabled', False) else None
         self._battery_requests = queue.Queue(maxsize=8)
         self._battery_clock = DRSClock() if self._battery is not None else None
         self._battery_boot_id = str(uuid.uuid4())
@@ -720,6 +721,8 @@ class TelemetryMonitor:
             self._battery_clock.stop()
         if self._worker is not None:
             self._worker.join(timeout=1)
+        if self._battery is not None:
+            self._battery.checkpoint(time.monotonic(), force=True)
         self._hardware_ready = False
 
 
