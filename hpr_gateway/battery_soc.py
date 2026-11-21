@@ -200,9 +200,17 @@ class BatteryEstimator:
 
     def update(self, voltage, current, now):
         self.poll(now)
-        if self.state == 'rejected':
+        recovering_timeout = (self.state == 'rejected'
+                              and self.reason == 'voltage_not_stable_before_timeout')
+        if self.state == 'rejected' and not recovering_timeout:
             return
         if not finite_number(voltage) or not self.minimum <= voltage <= self.maximum:
+            if recovering_timeout:
+                self.samples.clear()
+                self.recent_voltage.clear()
+                self.filtered_voltage = None
+                self.last_sample = None
+                return
             self.invalidate('battery_voltage_out_of_range')
             return
         delta = now - self.last_sample if self.last_sample is not None else 0
@@ -226,6 +234,14 @@ class BatteryEstimator:
         stable = (len(self.samples) >= 5 and now - self.samples[0][0] >= self.stable_seconds
                   and max(v for _, v in self.samples) - min(v for _, v in self.samples) <= self.spread)
         estimate = voltage_soc(self.filtered_voltage, self.curve)
+        if recovering_timeout:
+            if not stable:
+                return
+            # The original request timed out. Resume a fresh estimate without
+            # retroactively acknowledging that request or using its old pack SOC.
+            self.request_id = None
+            self.filtered_voltage = statistics.median(v for _, v in self.samples)
+            estimate = voltage_soc(self.filtered_voltage, self.curve)
         if self.initialised and self.pending_until is None and self.state in ('invalid', 'stale', 'settling') and not stable:
             self.state = 'settling'
             self.reason = 'waiting_for_stable_voltage'
@@ -250,7 +266,7 @@ class BatteryEstimator:
                 self.reason = None
         if finite_number(current) and delta:
             self.ah_used += max(0, current) * delta / 3600
-        self.checkpoint(now)
+        self.checkpoint(now, force=recovering_timeout)
 
     def snapshot(self):
         usable = self.initialised and self.pending_until is None and self.state in ('ready', 'completed')

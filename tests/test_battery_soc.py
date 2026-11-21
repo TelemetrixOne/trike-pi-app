@@ -191,22 +191,24 @@ class BatterySocTests(unittest.TestCase):
         self.assertEqual('rejected', estimator.state)
         self.assertIsNone(estimator.snapshot()['soc_pct'])
 
-    def test_unstable_swap_timeout_stays_rejected_until_explicit_retry(self):
-        estimator = self.estimator()
+    def test_unstable_swap_timeout_recovers_from_fresh_stable_voltage(self):
+        curve = [[12.6, 0], [18.74, 90], [20.18, 100]]
+        estimator = BatteryEstimator({'enabled': True, 'voltage_soc_curve': curve})
         self.settle(estimator, 18)
         estimator.ah_used = 2
         estimator.request_swap('unstable', 10)
         for second in range(10, 40):
             estimator.update(18 if second % 2 else 20, 0, second)
         estimator.poll(40)
-        estimator.poll(50)
-        self.settle(estimator, 20, 51)
+        estimator.update(23, 0, 41)
+        estimator.update(19.8, 0, 42)
         self.assertEqual('rejected', estimator.state)
-        self.assertEqual(2, estimator.ah_used)
         self.assertIsNone(estimator.snapshot()['soc_pct'])
-        estimator.request_swap('retry', 60)
-        self.settle(estimator, 20, 60)
-        self.assertEqual('completed', estimator.state)
+        self.settle(estimator, 19.8, 51)
+        self.assertEqual('ready', estimator.state)
+        self.assertIsNone(estimator.request_id)
+        self.assertLess(estimator.ah_used, 0.001)
+        self.assertAlmostEqual(97.4, estimator.snapshot()['soc_pct'], places=1)
 
     def test_curve_and_timing_configuration_rejects_mistakes(self):
         for config in ({'enabled': 1}, {'profile': 'unknown'}, {'filter_seconds': 0},
