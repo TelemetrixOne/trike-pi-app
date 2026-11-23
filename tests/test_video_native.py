@@ -35,26 +35,23 @@ class NativeVideoTests(unittest.TestCase):
             cameras = {'front': {'device': '/absent'}, 'rear': {'device': rear.name}}
             self.assertEqual(video.resolve_devices(cameras, [rear.name]), {'rear': rear.name})
 
-    def test_mode_belongs_to_connected_connector(self):
-        text = ('Connector 0 (33) HDMI-A-1 (disconnected)\n'
-                '  Crtc 0 (90) 1920x1080@60\n'
-                'Connector 1 (42) HDMI-A-2 (connected)\n'
-                '  Crtc 3 (100) 800x480@60\n')
-        with patch.object(video.subprocess, 'check_output', return_value=text):
-            self.assertEqual(video.display_mode(), (42, 800, 480))
-
-    def test_hdmi_is_uncropped_and_publisher_keeps_central_settings(self):
+    def test_publisher_preserves_rotation_quality_and_full_frame(self):
         camera = {'rotation': '180', 'stream_size': '640x360', 'path': 'race-front',
                   'bitrate': '900k', 'gop': 25, 'output_framerate': 25}
-        display = video.display_pipeline('/tmp/front.sock', '1280x720', 30, camera, (33, 800, 480))
-        self.assertIn('video-direction=180', display)
-        self.assertIn('add-borders=true', display)
-        self.assertNotIn('crop', display)
-        self.assertNotIn('compositor', display)
         publisher = video.publisher_pipeline('/tmp/front.sock', '1280x720', 30, camera, 'front', 9554)
+        self.assertIn('video-direction=180', publisher)
+        self.assertIn('add-borders=true', publisher)
+        self.assertNotIn('crop', publisher)
         self.assertIn('bitrate=900', publisher)
         self.assertIn('127.0.0.1:9554/race-front', publisher)
         self.assertIn('width=640,height=360,framerate=25/1', publisher)
+
+    def test_matching_native_and_stream_modes_skip_scaling(self):
+        pipeline = video.publisher_pipeline('/tmp/front', '1280x720', 30,
+                                           {'rotation': '180', 'stream_size': '1280x720'}, 'front', 8554)
+        self.assertNotIn('videoscale', pipeline)
+        self.assertIn('video-direction=180', pipeline)
+        self.assertIn('x264enc', pipeline)
 
     def test_720p_source_fits_800x600_stream_without_crop_or_stretch(self):
         camera = {'rotation': '180', 'stream_size': '800x600',
@@ -65,11 +62,7 @@ class NativeVideoTests(unittest.TestCase):
         self.assertIn('videoscale add-borders=true', publisher)
         self.assertIn('format=I420,pixel-aspect-ratio=1/1', publisher)
         self.assertNotIn('crop', publisher)
-        hdmi = video.display_pipeline('/tmp/display.sock', '1280x720', 30, camera, (33, 800, 480))
-        self.assertIn('image/jpeg,width=1280,height=720,', hdmi)
-        self.assertIn('add-borders=true', hdmi)
-
-    def test_hdmi_hotplug_does_not_restart_publishers(self):
+    def test_stream_only_supervisor_preserves_per_camera_capture(self):
         started, handlers, loops, pipelines = [], {}, [0], {}
 
         class FakeChild:
@@ -97,24 +90,26 @@ class NativeVideoTests(unittest.TestCase):
             front, rear = Path(directory) / 'front', Path(directory) / 'rear'
             front.touch()
             rear.touch()
-            settings = {'cameras': {'front': {'device': str(front), 'capture_size': '800x600',
+            settings = {'display': {'enabled': True, 'picture_in_picture': {'enabled': True}}, 'cameras': {'front': {'device': str(front), 'capture_size': '800x600', 'capture_framerate': 25,
                                               'stream_size': '800x600'},
                                      'rear': {'device': str(rear)}}}
             with patch.dict(video.os.environ, {'RUNTIME_DIRECTORY': directory}), \
                  patch.object(video, 'CameraControls', return_value=MagicMock(snapshot=lambda: {})), \
                  patch.object(video, 'Child', FakeChild), \
                  patch.object(video.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
-                 patch.object(video.time, 'sleep', side_effect=tick), \
-                 patch.object(video, 'display_mode', side_effect=[None, (33, 800, 480), None]):
+                 patch.object(video.time, 'sleep', side_effect=tick):
                 video.supervise(settings)
         self.assertEqual(started.count('front-publish'), 1)
         self.assertEqual(started.count('rear-publish'), 1)
-        self.assertEqual(started.count('hdmi'), 1)
-        for name in ('front-capture', 'front-publish', 'hdmi'):
+        self.assertEqual(set(started), {'front-capture', 'front-publish', 'rear-capture', 'rear-publish'})
+        for name in ('front-capture', 'front-publish'):
             self.assertIn('image/jpeg,width=800,height=600,', pipelines[name])
         for name in ('rear-capture', 'rear-publish'):
             self.assertIn('image/jpeg,width=1280,height=720,', pipelines[name])
-        self.assertIn('add-borders=true', pipelines['hdmi'])
+        self.assertIn('framerate=25/1', pipelines['front-capture'])
+        self.assertIn('framerate=30/1', pipelines['rear-capture'])
+        self.assertNotIn('display.sock', str(pipelines))
+        self.assertNotIn('tee ', pipelines['front-capture'])
 
 
 if __name__ == '__main__':

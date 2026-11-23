@@ -47,7 +47,7 @@ class VideoTimestampTests(TestCase):
         self.assertEqual(summer.strftime(FORMAT), '11:00:00 23-10-2026')
         self.assertEqual(winter.strftime(FORMAT), '10:00:00 23-07-2026')
 
-    def test_native_both_streams_one_encode_and_hdmi_unchanged(self):
+    def test_native_both_streams_one_encode(self):
         spec = importlib.util.spec_from_file_location('timestamp_video', Path(__file__).parents[1] / 'bin/hpr-video-native.py')
         video = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(video)
@@ -59,8 +59,6 @@ class VideoTimestampTests(TestCase):
                 self.assertEqual(pipeline.count('clockoverlay '), 1)
                 self.assertLess(pipeline.index('clockoverlay '), pipeline.index('x264enc '))
                 self.assertGreater(pipeline.index('clockoverlay '), pipeline.index('videoscale '))
-                self.assertNotIn('clockoverlay', video.display_pipeline('/tmp/front', '1280x720', 30,
-                                                                      {}, (33, 800, 480)))
         self.assertIn('silent=true', GST_FILTER)
         with patch.object(video.subprocess, 'check_output', return_value='yes\n'):
             self.assertTrue(video.clock_synchronised())
@@ -70,18 +68,14 @@ class VideoTimestampTests(TestCase):
         with patch.object(video.subprocess, 'check_output', side_effect=OSError):
             self.assertFalse(video.clock_synchronised())
 
-    def test_legacy_all_network_branches_only(self):
+    def test_legacy_network_publisher_timestamp_and_no_display_fallback(self):
         root = Path(__file__).parents[1] / 'bin'
         compose = (root / 'hpr-video-compose.sh').read_text()
-        network = [line for line in compose.splitlines() if 'setsar=1' in line and ('[mn]' in line or '[pn]' in line)]
-        self.assertEqual(len(network), 6)
-        for line in network:
-            self.assertIn('setsar=1${HPR_VIDEO_FF_TIMESTAMP}', line)
-            if '[display]' in line:
-                self.assertNotIn('HPR_VIDEO_FF_TIMESTAMP', line.split('[md0]')[-1] if '[md0]${MR}' in line
-                                 else line.split('[pd0]')[-1])
+        self.assertNotIn('ffmpeg', compose)
+        self.assertNotIn('video.display', compose)
         publish = (root / 'hpr-video-publish.sh').read_text()
-        self.assertEqual(publish.count('setsar=1${HPR_VIDEO_FF_TIMESTAMP}'), 2)
+        self.assertEqual(publish.count('setsar=1${HPR_VIDEO_FF_TIMESTAMP}'), 1)
+        self.assertNotIn('fbdev', publish)
 
     def test_ffmpeg_filter_actually_parses(self):
         ffmpeg = shutil.which('ffmpeg')

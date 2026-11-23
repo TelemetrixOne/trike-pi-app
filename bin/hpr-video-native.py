@@ -1,9 +1,5 @@
 #!/usr/bin/python3
-"""Isolated USB captures, RTSP publishers and front-only KMS viewer.
-
-Supervise monotonic frame progress, not just process liveness. GStreamer runs
-in disposable children so a stuck display cannot take down healthy streams.
-"""
+"""Independent USB captures and RTSP publishers with frame-progress recovery."""
 import glob
 import json
 import os
@@ -255,16 +251,11 @@ def jpeg_caps(size, fps):
     return f'image/jpeg,width={width},height={height},framerate={int(fps)}/1,pixel-aspect-ratio=1/1'
 
 
-def capture_pipeline(device, socket, size, fps, display_socket=None):
-    pipeline = (f'v4l2src device={quote(device)} io-mode=mmap do-timestamp=true ! '
-                f'{jpeg_caps(size, fps)} ! identity name=progress silent=true ! tee name=frames ')
-    # Separate SHM rings: a stopped HDMI reader must not pin the publisher's
-    # buffers. Each branch drops independently when its ring fills.
-    for target in [socket] + ([display_socket] if display_socket else []):
-        pipeline += (f'frames. ! {QUEUE} ! shmsink socket-path={quote(target)} '
-                     'shm-size=8388608 wait-for-connection=false sync=false '
-                     'async=false enable-last-sample=false ')
-    return pipeline
+def capture_pipeline(device, socket, size, fps):
+    return (f'v4l2src device={quote(device)} io-mode=mmap do-timestamp=true ! '
+            f'{jpeg_caps(size, fps)} ! identity name=progress silent=true ! {QUEUE} ! '
+            f'shmsink socket-path={quote(socket)} shm-size=8388608 '
+            'wait-for-connection=false sync=false async=false enable-last-sample=false')
 
 
 def source_pipeline(socket, size, fps):
@@ -272,23 +263,17 @@ def source_pipeline(socket, size, fps):
             f'{jpeg_caps(size, fps)} ! {QUEUE} ! jpegdec')
 
 
-def display_pipeline(socket, size, fps, camera, mode):
-    connector, width, height = mode
-    return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
-            '! videoscale add-borders=true ! videoconvert ! '
-            f'video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,format=BGRA ! '
-            'kmssink name=progress driver-name=vc4 '
-            f'connector-id={connector} sync=false async=false processing-deadline=0 skip-vsync=true '
-            'force-modesetting=false enable-last-sample=false')
-
-
 def publisher_pipeline(socket, size, fps, camera, role, port):
     width, height = dimensions(camera.get('stream_size', '640x360'))
     bitrate = str(camera.get('bitrate', '700k'))
     kbps = int(float(bitrate[:-1]) * 1000) if bitrate.endswith('M') else (
         int(bitrate[:-1]) if bitrate.endswith('k') else int(bitrate) // 1000)
+    source_width, source_height = dimensions(size)
+    if str(camera.get('rotation', 'none')) in ('clockwise_90', 'anticlockwise_90'):
+        source_width, source_height = source_height, source_width
+    scale = 'videoscale add-borders=true ! ' if (source_width, source_height) != (width, height) else ''
     return (f'{source_pipeline(socket, size, fps)} ! videoflip video-direction={rotation(camera)} '
-            '! videoconvert ! videoscale add-borders=true ! videorate drop-only=true ! '
+            f'! videoconvert ! {scale}videorate drop-only=true ! '
             f'video/x-raw,width={width},height={height},framerate={int(camera.get("output_framerate", 25))}/1,format=I420,pixel-aspect-ratio=1/1 ! '
             f'{os.environ.get("HPR_VIDEO_GST_TIMESTAMP", "")}'
             'x264enc speed-preset=ultrafast tune=zerolatency '
@@ -319,23 +304,6 @@ def resolve_devices(cameras, candidates=None):
                 used.add(real)
                 break
     return result
-
-
-def display_mode():
-    try:
-        output = subprocess.check_output(['kmsprint'], text=True, timeout=2, stderr=subprocess.DEVNULL)
-        connector = None
-        for line in output.splitlines():
-            if line.startswith('Connector '):
-                match = re.match(r'Connector \d+ \((\d+)\) HDMI-A-\d+ \(connected\)', line)
-                connector = int(match[1]) if match else None
-            elif connector is not None:
-                match = re.search(r'Crtc \d+ \(\d+\) (\d+)x(\d+)@', line)
-                if match:
-                    return connector, int(match[1]), int(match[2])
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
 
 
 def write_json(path, value):
@@ -387,17 +355,14 @@ def worker(description, heartbeat, kind):
         update_clock()
         GLib.timeout_add_seconds(15, update_clock)
     frames, previous = [0], [0]
-    # Completed sink renders detect a blocked KMS sink; a probe before it
-    # would incorrectly report queued frames as displayed.
-    if kind != 'display':
-        def buffer_probe(pad, info):
-            frames[0] += 1
-            return Gst.PadProbeReturn.OK
-        element.get_static_pad('src').add_probe(Gst.PadProbeType.BUFFER, buffer_probe)
+    def buffer_probe(pad, info):
+        frames[0] += 1
+        return Gst.PadProbeReturn.OK
+    element.get_static_pad('src').add_probe(Gst.PadProbeType.BUFFER, buffer_probe)
     loop, failed = GLib.MainLoop(), [False]
 
     def progress():
-        count = frames[0] if kind != 'display' else element.get_property('stats').get_value('rendered')
+        count = frames[0]
         if count != previous[0]:
             write_json(heartbeat, {'at': time.monotonic(), 'frames': count,
                                    'timestamp_visible': stamp_visible[0]})
@@ -455,9 +420,6 @@ class Child:
 
 def supervise(settings):
     cameras = {role: settings.get('cameras', {}).get(role, {}) for role in ('front', 'rear')}
-    display = settings.get('display', {})
-    size = display.get('capture_size', '1280x720')
-    fps = int(display.get('capture_framerate', 30))
     root = Path(os.environ.get('RUNTIME_DIRECTORY', '/tmp'))
     running = [True]
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))
@@ -487,7 +449,8 @@ def supervise(settings):
             while running[0]:
                 devices = resolve_devices(cameras)
                 for role, camera in cameras.items():
-                    camera_size = camera.get('capture_size', size)
+                    camera_size = camera.get('capture_size', '1280x720')
+                    fps = int(camera.get('capture_framerate', 30))
                     device = devices.get(role)
                     try:
                         stat = os.stat(device) if device else None
@@ -497,34 +460,23 @@ def supervise(settings):
                     capture = children.get(role + '-capture')
                     if identity != identities.get(role) or (capture and capture.unhealthy()):
                         # Only this camera's consumers reconnect to its new socket.
-                        if role == 'front':
-                            stop('hdmi')
                         stop(role + '-publish')
                         stop(role + '-capture')
                         (directory / (role + '.sock')).unlink(missing_ok=True)
-                        if role == 'front':
-                            (directory / 'display.sock').unlink(missing_ok=True)
                         identities[role] = identity
                         restarts[role + '-capture'] = restarts.get(role + '-capture', 0) + 1
                         print(f'{role} camera state changed; reconnecting its consumers', flush=True)
                     if identity:
                         socket = directory / (role + '.sock')
                         ensure(role + '-capture', 'capture', capture_pipeline(
-                            device, socket, camera_size, fps, directory / 'display.sock' if role == 'front' else None))
+                            device, socket, camera_size, fps))
                         if socket.exists():
                             ensure(role + '-publish', 'publish', publisher_pipeline(
                                 socket, camera_size, fps, camera, role, settings.get('rtsp_port', 8554)))
                 controls.update_devices({role: (device, identities[role]) for role, device in devices.items()
                                          if identities.get(role)})
-                mode = display_mode() if display.get('enabled', True) else None
-                socket = directory / 'display.sock'
-                if mode and identities.get('front') and socket.exists():
-                    ensure('hdmi', 'display', display_pipeline(
-                        socket, cameras['front'].get('capture_size', size), fps, cameras['front'], mode))
-                else:
-                    stop('hdmi')
                 write_json(root / 'video-status.json', {
-                    'at': time.monotonic(), 'display_mode': mode, 'pip': False,
+                    'at': time.monotonic(),
                     'timestamp_requested': os.environ.get('HPR_VIDEO_TIMESTAMP_ENABLED') == '1',
                     'timestamp_timezone': os.environ.get('TZ'),
                     'camera_controls': controls.snapshot(),

@@ -21,6 +21,8 @@ for required in \
   bin/hpr-video-compose.sh \
   bin/hpr-video-compose-gst.sh \
   bin/hpr-video-native.py \
+  hpr_gateway/video_local.py \
+  hpr_gateway/video_health.py \
   hpr_gateway/config.py \
   hpr_gateway/services/trike_config_sync.py \
   scripts/validate-pi-gateway.sh
@@ -40,12 +42,12 @@ fi
 bash -n "${REPO_ROOT}/bin/hpr-video-publish.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose.sh"
 bash -n "${REPO_ROOT}/bin/hpr-video-compose-gst.sh"
-# Required by the supervised native viewer. Install only missing runtime
+# Required by the supervised native publishers. Install only missing runtime
 # dependencies; do not upgrade the OS or restart unrelated services.
 if ! /usr/bin/python3 -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository import Gst" 2>/dev/null; then
   apt-get install -y --no-upgrade python3-gi gir1.2-gstreamer-1.0
 fi
-for element in v4l2src shmsink shmsrc jpegdec kmssink x264enc rtspclientsink; do
+for element in v4l2src shmsink shmsrc jpegdec x264enc rtspclientsink; do
   gst-inspect-1.0 "$element" >/dev/null
 done
 install -d -m 0700 "${BACKUP_ROOT}"
@@ -59,6 +61,8 @@ for relative in \
   runtime/video/hpr-video-compose.sh \
   runtime/video/hpr-video-compose-gst.sh \
   runtime/video/hpr-video-native.py \
+  hpr_gateway/video_local.py \
+  hpr_gateway/video_health.py \
   hpr_gateway/config.py \
   hpr_gateway/services/trike_config_sync.py \
   scripts/validate-pi-gateway.sh
@@ -85,6 +89,8 @@ install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose-gst.sh" "${INSTALL_ROOT}/bin
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-compose-gst.sh" "${INSTALL_ROOT}/runtime/video/hpr-video-compose-gst.sh"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/bin/hpr-video-native.py"
 install -m 0755 "${REPO_ROOT}/bin/hpr-video-native.py" "${INSTALL_ROOT}/runtime/video/hpr-video-native.py"
+install -m 0644 "${REPO_ROOT}/hpr_gateway/video_local.py" "${INSTALL_ROOT}/hpr_gateway/video_local.py"
+install -m 0644 "${REPO_ROOT}/hpr_gateway/video_health.py" "${INSTALL_ROOT}/hpr_gateway/video_health.py"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/config.py" "${INSTALL_ROOT}/hpr_gateway/config.py"
 install -m 0644 "${REPO_ROOT}/hpr_gateway/services/trike_config_sync.py" \
   "${INSTALL_ROOT}/hpr_gateway/services/trike_config_sync.py"
@@ -92,9 +98,8 @@ install -m 0755 "${REPO_ROOT}/scripts/validate-pi-gateway.sh" "${INSTALL_ROOT}/s
 
 cat > /etc/systemd/system/hpr-video-compositor.service <<EOF
 [Unit]
-Description=HPR front HDMI viewer and independent camera publishers
-After=hpr-video-mediamtx.service hpr-video-console.service
-Requires=hpr-video-console.service
+Description=HPR independent USB camera streaming
+After=hpr-video-mediamtx.service
 Wants=hpr-video-mediamtx.service
 StartLimitIntervalSec=0
 

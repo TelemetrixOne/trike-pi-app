@@ -39,16 +39,26 @@ def read_local(path: str) -> dict:
     return {} if data is None else data
 
 
+def stream_settings(settings: dict) -> dict:
+    """Migrate retired shared capture settings without changing camera quality."""
+    result = copy.deepcopy(settings)
+    legacy = result.pop('display', {}) or {}
+    for camera in result.get('cameras', {}).values():
+        camera.setdefault('capture_size', legacy.get('capture_size', '1280x720'))
+        camera.setdefault('capture_framerate', legacy.get('capture_framerate', 30))
+    return result
+
+
 def merge_local(settings: dict, overrides: dict) -> dict:
     if not isinstance(overrides, dict) or set(overrides) - {'front', 'rear'}:
         raise ValueError('Local video file accepts front/rear sections only')
-    result = copy.deepcopy(settings)
-    capture_fps = int(settings.get('display', {}).get('capture_framerate', 30))
+    result = stream_settings(settings)
     for role, values in overrides.items():
         if role not in result.get('cameras', {}):
             raise ValueError(f'{role} is not configured centrally')
         if not isinstance(values, dict) or set(values) - FIELDS:
             raise ValueError(f'{role}: only capture_size, stream_size, output_framerate and bitrate are local')
+        capture_fps = int(result['cameras'][role].get('capture_framerate', 30))
         for key, value in values.items():
             if key in {'stream_size', 'capture_size'} and value not in SIZES:
                 raise ValueError(f'{role}: unsupported landscape stream size')
@@ -63,7 +73,7 @@ def merge_local(settings: dict, overrides: dict) -> dict:
 
 
 def video_settings(config_path: str, local_path: str = LOCAL_PATH) -> dict:
-    settings = load_config(config_path).get('video', {})
+    settings = stream_settings(load_config(config_path).get('video', {}))
     try:
         overrides = read_local(local_path)
         merged = merge_local(settings, overrides)

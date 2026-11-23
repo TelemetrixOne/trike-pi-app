@@ -18,17 +18,19 @@ On 2026-10-21 the shared front capture was restored to 1280x720 to preserve
 HDMI quality. The latest approved stream profile is 800x450/30 at 1500k,
 preserving the full 16:9 image without padding, stretching or cropping.
 This is a scaled streaming size, not an advertised USB camera capture mode.
-Rear capture remains 1280x720. HDMI uses the 720p front capture and retains
-its aspect-preserving, uncropped fit to the detected monitor output mode.
+Rear capture remains 1280x720. HDMI is retired; these capture modes are retained
+until camera-native alternatives can be checked on the Pi. Capture settings are
+now per-camera (`capture_size`, `capture_framerate`), independent of any display.
 The previous 1280x720 profile remains available. Apply future
 quality profiles with `scripts/apply-pi-local-video.sh PROFILE.yaml`; it merges only
 specified quality fields, preserves unmentioned roles and settings, backs up the
 current file and automatically restores it if validation fails. The 800x600
 profile remains available as a padded 4:3 alternative.
-Front device identity, rotation, stream path, credentials and HDMI configuration
+Front device identity, rotation, stream path and credentials
 remain central; only quality fields listed above are local. Optional per-camera
-`capture_size` overrides the shared capture-size default; verify camera-native
-support before setting it. An omitted capture_size retains the shared default.
+`capture_size` overrides that camera's central capture mode; verify camera-native
+support before setting it. Missing per-camera capture settings default to 1280x720/30;
+legacy shared capture settings are migrated without changing the configured mode.
 No web configuration section changes are needed.
 
 The normal video launcher reads central settings through the existing loader,

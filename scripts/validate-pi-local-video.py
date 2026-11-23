@@ -30,7 +30,7 @@ while time.monotonic() < deadline:
             assert f'width={width},height={height}' in command, f'{role}: wrong resolution'
             assert f'bitrate={kbps} ' in command, f'{role}: wrong bitrate'
             assert f"framerate={camera.get('output_framerate', 25)}/1" in command, f'{role}: wrong frame rate'
-            capture_size = camera.get('capture_size', settings.get('display', {}).get('capture_size', '1280x720'))
+            capture_size = camera.get('capture_size', '1280x720')
             capture_pid = current['children'][role + '-capture']['pid']
             capture_cmd = Path(f'/proc/{capture_pid}/cmdline').read_bytes().decode().replace('\0', ' ')
             cw, ch = capture_size.split('x')

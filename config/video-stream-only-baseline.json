@@ -1,0 +1,11 @@
+{
+  "bin/hpr-video-publish.sh": "326d536c2925b8c0994eba9cf693ebccf31e9c8aaa6c77522de743ce8b954d93",
+  "bin/hpr-video-compose.sh": "72d4fa181aeaa3f5914dab69c95f17afd48bb840fba97aeab098c6f3b4d679e2",
+  "bin/hpr-video-compose-gst.sh": "ebee916a31cf42a2f13ba5781fcea4227246061ce3c0fcfcbe8db77e2f6a56b8",
+  "bin/hpr-video-native.py": "c45f3fdc92d22c46489bc9f47e9f99bc6b60d148f83676fd207817cebf27b9c7",
+  "hpr_gateway/config.py": "0cfaecbdbf50057073439d28cb15032f6ec63b81569090a0117e6a41ba8dd64f",
+  "hpr_gateway/video_local.py": "93fb6f0a178c2b625dd23070f01eda452f921710c10fc1d3a54cae72a959b616",
+  "hpr_gateway/video_health.py": "47f2fa2433c633d5ef54559922c5fe512df2b42027fb0ed261117911a3b8cce3",
+  "hpr_gateway/services/trike_config_sync.py": "5a3fb8ac47567766db7e7509585081b0bbd32d5a0ce403d6b96f1bd79f8305f3",
+  "scripts/validate-pi-gateway.sh": "dfa91ad656c4eb6223a0c40bc7b53888d3f845240b18e7c64ba948bdc14d20e2"
+}

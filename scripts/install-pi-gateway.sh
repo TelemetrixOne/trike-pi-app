@@ -544,31 +544,7 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
 
-  local camera display_enabled display_camera camera_after camera_requires pip_enabled
-  display_enabled="$(cfg video.display.enabled --default false)"
-  display_camera="$(cfg video.display.camera --default front)"
-  pip_enabled="$(cfg video.display.picture_in_picture.enabled --default false)"
-  if [ "${display_enabled}" = "true" ]; then
-    cat > /etc/systemd/system/hpr-video-console.service <<'EOF'
-[Unit]
-Description=Prepare HPR dedicated HDMI video console
-After=local-fs.target
-
-[Service]
-Type=oneshot
-Environment=TERM=linux
-ExecStart=/bin/sh -c '/usr/bin/setterm --cursor off --blank 0 --powersave off < /dev/tty1 > /dev/tty1'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl disable --now getty@tty1.service 2>/dev/null || true
-    systemctl mask getty@tty1.service
-  else
-    rm -f /etc/systemd/system/hpr-video-console.service
-    systemctl unmask getty@tty1.service 2>/dev/null || true
-  fi
+  local camera camera_after camera_requires
 
   for camera in front rear; do
     if [ "$(cfg "video.cameras.${camera}.enabled" --default false)" != "true" ]; then
@@ -577,10 +553,6 @@ EOF
     fi
     camera_after="hpr-video-mediamtx.service"
     camera_requires="hpr-video-mediamtx.service"
-    if [ "${display_enabled}" = "true" ] && [ "${camera}" = "${display_camera}" ]; then
-      camera_after="${camera_after} hpr-video-console.service"
-      camera_requires="${camera_requires} hpr-video-console.service"
-    fi
     cat > "/etc/systemd/system/hpr-video-${camera}.service" <<EOF
 [Unit]
 Description=HPR ${camera} USB camera publisher
@@ -610,9 +582,8 @@ EOF
 
   cat > /etc/systemd/system/hpr-video-compositor.service <<EOF
 [Unit]
-Description=HPR front HDMI viewer and independent camera publishers
-After=hpr-video-mediamtx.service hpr-video-console.service
-Requires=hpr-video-console.service
+Description=HPR independent USB camera streaming
+After=hpr-video-mediamtx.service
 Wants=hpr-video-mediamtx.service
 StartLimitIntervalSec=0
 
@@ -738,13 +709,7 @@ if [ "${INSTALL_SCOPE}" = "all" ]; then
   systemctl enable hpr-boot-marker.service hpr-shutdown-marker.service
   enable_service_if_configured video hpr-video-mediamtx.service
   if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
-    if [ "$(cfg video.display.enabled --default false)" = "true" ]; then
-      systemctl enable hpr-video-console.service
-      if [ "${HPR_START_SERVICES:-true}" = "true" ]; then
-        systemctl restart hpr-video-console.service
-      fi
-    fi
-    if [ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ] || [ "$(cfg video.display.picture_in_picture.enabled --default false)" = "true" ]; then
+    if [ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ]; then
       systemctl disable --now hpr-video-front.service hpr-video-rear.service 2>/dev/null || true
       systemctl enable hpr-video-compositor.service
       if [ "${HPR_START_SERVICES:-true}" = "true" ]; then

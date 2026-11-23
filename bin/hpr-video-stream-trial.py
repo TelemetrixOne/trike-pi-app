@@ -152,7 +152,7 @@ def start(size, bitrate):
         else:
             STATE.unlink(missing_ok=True)
         raise
-    print(f'Front trial active: {size}, {bitrate}; rear/capture/HDMI settings unchanged')
+    print(f'Front trial active: {size}, {bitrate}; rear/capture settings unchanged')
     print(f'Backup: {backup}')
     print('Rollback: sudo /opt/hpr/gateway/venv/bin/python /opt/hpr/gateway/bin/hpr-video-stream-trial.py stop')
 

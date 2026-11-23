@@ -111,7 +111,7 @@ class TrikeConfigSyncTests(unittest.TestCase):
             call("hpr-video-compositor.service", True),
         ])
 
-    def test_enabling_pip_switches_to_direct_compositor(self):
+    def test_legacy_pip_is_ignored_and_existing_capture_is_preserved(self):
         data = self._valid_config()
         profile = {
             "schema_version": 1, "trike_id": "trike1",
@@ -130,16 +130,22 @@ class TrikeConfigSyncTests(unittest.TestCase):
             "power_cadence": {"power_cadence_enabled": data["services"]["power_cadence"]["enabled"], "devices": data["power_cadence"]["devices"]},
             "gpio": {"gpio_enabled": False, "gpio": data["gpio"]},
         }
+        data['video']['display'] = {'capture_size': '1280x720', 'capture_framerate': 30, 'enabled': True}
+        data['video']['cameras']['front'].pop('capture_size', None)
+        data['video']['cameras']['front'].pop('capture_framerate', None)
         envelope = {"hash": profile_hash(profile), "profile": profile}
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hpr.yaml"
             path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
             systemd = Mock()
-            ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
+            with patch.object(Path, 'is_file', return_value=True):
+                ProfileApplier(str(path), systemd).apply(copy.deepcopy(envelope))
+            applied = yaml.safe_load(path.read_text())
+            self.assertNotIn('display', applied['video'])
+            self.assertEqual(applied['video']['cameras']['front']['capture_size'], '1280x720')
 
         self.assertEqual(systemd.apply.call_args_list, [
-            call("hpr-video-mediamtx.service", True),
             call("hpr-video-front.service", False),
             call("hpr-video-rear.service", False),
             call("hpr-video-compositor.service", True),

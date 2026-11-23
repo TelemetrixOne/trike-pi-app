@@ -177,11 +177,9 @@ if [ "$(cfg services.video.enabled --default false)" = "true" ]; then
     fail mediamtx-binary "missing ${mediamtx_binary}"
   fi
   check_video_boot_policy hpr-video-mediamtx.service local-fs.target
-  pip_enabled="$(cfg video.display.picture_in_picture.enabled --default false)"
   native_video=false
   if [ -f "${INSTALL_ROOT}/runtime/video/hpr-video-native.py" ]; then
     native_video=true
-    pip_enabled=true # shared service ownership, not a PiP capability
     check_unit hpr-video-compositor.service
     /usr/bin/python3 - <<'PY' && pass video-progress "all available workers advancing" || fail video-progress "worker frame progress missing or stale"
 import json, time
@@ -192,8 +190,6 @@ assert s['children'], 'no cameras available'
 for role in ('front', 'rear'):
     if role + '-capture' in s['children']:
         assert role + '-publish' in s['children'], role + ' publisher missing'
-if s.get('display_mode') and 'front-capture' in s['children']:
-    assert 'hdmi' in s['children'], 'connected HDMI viewer missing'
 for name, child in s['children'].items():
     assert time.monotonic() - child.get('at', 0) < 8, name
 PY
@@ -204,55 +200,13 @@ PY
       [ -e "${device}" ] \
         && pass "camera:${camera}" "${device}" \
         || fail "camera:${camera}" "not enumerated at ${device}"
-      if [ "${pip_enabled}" != "true" ]; then
+      if [ "${native_video}" != "true" ]; then
         check_unit "hpr-video-${camera}.service"
         check_video_boot_policy "hpr-video-${camera}.service" hpr-video-mediamtx.service
       fi
     fi
   done
-  if [ "$(cfg video.display.enabled --default false)" = "true" ]; then
-    display_camera="$(cfg video.display.camera --default front)"
-    if [ "${pip_enabled}" = "true" ]; then
-      pass hdmi-display "supervised camera service (native viewer is front-only)"
-      check_unit hpr-video-compositor.service
-      compositor_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
-      grep -q 'hpr-video-compose.sh' <<<"${compositor_text}" \
-        && pass hdmi-direct "local camera viewer service" \
-        || fail hdmi-direct "viewer unit is not direct-camera configured"
-    elif [ "$(cfg "video.cameras.${display_camera}.enabled" --default false)" = "true" ]; then
-      pass hdmi-display "direct USB output integrated with hpr-video-${display_camera}.service"
-    else
-      fail hdmi-display "configured camera is disabled: ${display_camera}"
-    fi
-    display_device="$(cfg video.display.device --default /dev/fb0)"
-    [ -e "${display_device}" ] \
-      && pass hdmi-framebuffer "${display_device}" \
-      || fail hdmi-framebuffer "display device is unavailable: ${display_device}"
-    if [ "${native_video}" = "true" ]; then
-      gst-inspect-1.0 kmssink >/dev/null 2>&1 \
-        && pass hdmi-display-driver "native KMS output available" \
-        || fail hdmi-display-driver "native KMS output unavailable"
-    else
-      /usr/bin/ffmpeg -hide_banner -devices 2>/dev/null | grep -q 'fbdev' \
-        && pass hdmi-display-driver "FFmpeg framebuffer output available" \
-        || fail hdmi-display-driver "FFmpeg framebuffer output is unavailable"
-    fi
-    check_unit hpr-video-console.service
-    if [ "${pip_enabled}" = "true" ]; then
-      display_unit_text="$(systemctl cat hpr-video-compositor.service 2>/dev/null || true)"
-      display_unit_name="hpr-video-compositor.service"
-    else
-      display_unit_text="$(systemctl cat "hpr-video-${display_camera}.service" 2>/dev/null || true)"
-      display_unit_name="hpr-video-${display_camera}.service"
-    fi
-    grep -Eq '^After=.*hpr-video-console\.service' <<<"${display_unit_text}" \
-      && grep -Eq '^Requires=.*hpr-video-console\.service' <<<"${display_unit_text}" \
-      && pass hdmi-console-dependency "${display_unit_name}" \
-      || fail hdmi-console-dependency "display camera does not require console preparation"
-    [ "$(systemctl is-enabled getty@tty1.service 2>/dev/null || true)" = "masked" ] \
-      && pass hdmi-console-getty "tty1 login cursor suppressed" \
-      || fail hdmi-console-getty "getty@tty1.service must be masked"
-  fi
+
 fi
 
 declare -a service_pairs=(

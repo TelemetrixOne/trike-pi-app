@@ -12,8 +12,8 @@ class VideoLocalTests(unittest.TestCase):
     def setUp(self):
         self.video = {'cameras': {'front': {'stream_size': '640x360', 'bitrate': '700k',
                       'output_framerate': 25, 'rotation': '180', 'device': 'central-front',
-                      'path': 'central-path'}, 'rear': {'stream_size': '640x360', 'bitrate': '700k'}},
-                      'display': {'capture_size': '1280x720', 'capture_framerate': 30}, 'rtsp_port': 8554}
+                      'path': 'central-path', 'capture_size': '1280x720', 'capture_framerate': 30},
+                      'rear': {'stream_size': '640x360', 'bitrate': '700k', 'capture_size': '1280x720', 'capture_framerate': 30}}, 'rtsp_port': 8554}
 
     def test_only_quality_changes_and_input_is_not_mutated(self):
         before = copy.deepcopy(self.video)
@@ -22,7 +22,6 @@ class VideoLocalTests(unittest.TestCase):
         self.assertEqual(self.video, before)
         self.assertEqual(effective['cameras']['front'], {**before['cameras']['front'], **overlay['front']})
         self.assertEqual(effective['cameras']['rear'], before['cameras']['rear'])
-        self.assertEqual(effective['display'], before['display'])
         self.assertEqual(effective['rtsp_port'], before['rtsp_port'])
 
     def test_rejects_identity_overrides_wrong_types_sizes_rates_and_bitrates(self):
@@ -69,7 +68,6 @@ class VideoLocalTests(unittest.TestCase):
         self.assertEqual(effective['cameras']['front']['capture_size'], '1280x720')
         self.assertEqual(effective['cameras']['front']['output_framerate'], 30)
         self.assertEqual(effective['cameras']['rear'], self.video['cameras']['rear'])
-        self.assertEqual(effective['display'], self.video['display'])
         effective = local.merge_local(self.video, local.read_local(str(root / 'video-local.front-1280x720.yaml')))
         self.assertEqual(effective['cameras']['front']['stream_size'], '1280x720')
         self.assertEqual(effective['cameras']['front']['output_framerate'], 30)
@@ -80,4 +78,15 @@ class VideoLocalTests(unittest.TestCase):
         self.assertEqual(effective['cameras']['front']['stream_size'], '800x600')
         self.assertEqual(effective['cameras']['front']['bitrate'], '1500k')
         self.assertEqual(effective['cameras']['rear'], self.video['cameras']['rear'])
-        self.assertEqual(effective['display'], self.video['display'])
+
+    def test_legacy_capture_migration_preserves_both_cameras_without_display(self):
+        before = copy.deepcopy(self.video)
+        before['display'] = {'enabled': True, 'capture_size': '1920x1080', 'capture_framerate': 24}
+        for camera in before['cameras'].values():
+            camera.pop('capture_size'); camera.pop('capture_framerate')
+        effective = local.stream_settings(before)
+        self.assertNotIn('display', effective)
+        for camera in effective['cameras'].values():
+            self.assertEqual(camera['capture_size'], '1920x1080')
+            self.assertEqual(camera['capture_framerate'], 24)
+        self.assertIn('display', before)

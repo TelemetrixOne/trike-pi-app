@@ -37,13 +37,13 @@ class HealthAuthorityTests(unittest.TestCase):
             c.data['video'] = {'runtime_status_path': str(path), 'cameras': {'front': {'enabled': True}}}
             e = VideoEvidence()
             self.assertEqual(e.inspect(c, 'Good', 100)['overall'], 'Failed')
-            document = {'display_mode': None, 'children': {
+            document = {'children': {
                 'front-capture': {'pid': 1, 'at': 100, 'frames': 30},
                 'front-publish': {'pid': 2, 'at': 100, 'frames': 30}}}
             path.write_text(json.dumps(document))
             good = e.inspect(c, 'Good', 100)
             self.assertEqual(good['overall'], 'Good')
-            self.assertFalse(good['display_connected'])
+            self.assertNotIn('display_connected', good)
             for item in document['children'].values(): item['at'] = 111
             path.write_text(json.dumps(document))
             self.assertEqual(e.inspect(c, 'Good', 111)['overall'], 'Failed')
@@ -51,9 +51,9 @@ class HealthAuthorityTests(unittest.TestCase):
             document['children']['front-capture']['frames'] = 60
             path.write_text(json.dumps(document))
             self.assertEqual(e.inspect(c, 'Good', 111)['overall'], 'Good')
-            document['display_mode'] = '1280x720'
+            document['display_mode'] = '1280x720' # stale legacy field must not affect streaming health
             path.write_text(json.dumps(document))
-            self.assertEqual(e.inspect(c, 'Good', 111)['overall'], 'Failed')
+            self.assertEqual(e.inspect(c, 'Good', 111)['overall'], 'Good')
 
 
 if __name__ == '__main__': unittest.main()

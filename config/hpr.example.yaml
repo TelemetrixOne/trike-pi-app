@@ -345,25 +345,14 @@ video:
   mediamtx_arch: "linux_arm64"
   mediamtx_sha256: "EE2C5AB2F61C3FD70173F8A959FE603A7BDFF2B3451A379AED44A5A8CA298709"
   rtsp_port: 8554
-  display:
-    enabled: false
-    camera: "front"
-    device: "/dev/fb0"
-    pixel_format: "rgb565le"
-    capture_size: "1920x1080"
-    capture_framerate: 30
-    input_queue_size: 2
-    picture_in_picture:
-      enabled: false
-      camera: "rear"
-      width_percent: 25
-      margin_pixels: 24
   cameras:
     front:
       enabled: true
       device: "/dev/v4l/by-id/CHANGE_ME-front-video-index0"
       path: "front"
       rotation: "none"
+      capture_size: "1280x720"
+      capture_framerate: 30
       input_format: "mjpeg"
       video_size: "640x480"
       stream_size: "640x480"
@@ -376,6 +365,8 @@ video:
       device: "/dev/v4l/by-id/CHANGE_ME-rear-video-index0"
       path: "rear"
       rotation: "none"
+      capture_size: "1280x720"
+      capture_framerate: 30
       input_format: "mjpeg"
       video_size: "640x480"
       stream_size: "640x480"

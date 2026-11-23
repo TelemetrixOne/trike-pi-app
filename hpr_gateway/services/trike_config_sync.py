@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from ..config import HprConfig, config_arg_parser, load_config
+from ..video_local import stream_settings
 from ..mqtt import make_client
 from ..config_transaction import migrated, serialized_config
 
@@ -91,6 +92,7 @@ class ProfileApplier:
         for key in (
             "enabled", "device", "path", "input_format", "video_size",
             "stream_size", "input_framerate", "output_framerate", "bitrate",
+            "capture_size", "capture_framerate",
             "gop", "rotation",
         ):
             if key in source:
@@ -142,8 +144,8 @@ class ProfileApplier:
         previous_video = copy.deepcopy(current.get("video", {}) or {})
         video_enabled = bool(video.get("enabled"))
         video_target["enabled"] = video_enabled
-        if isinstance(video.get("display"), dict):
-            video_target["display"] = copy.deepcopy(video["display"])
+        video_target = stream_settings(video_target)
+        candidate['video'] = video_target
         for camera_name, camera in (video.get("cameras", {}) or {}).items():
             self._merge_camera(video_target.setdefault("cameras", {}).setdefault(camera_name, {}), camera)
         candidate["services"].setdefault("video", {})["enabled"] = video_enabled
@@ -162,30 +164,23 @@ class ProfileApplier:
                 and previous_without_rotation == target_without_rotation
                 and video_enabled == current.enabled("video")
             )
-            pip_enabled = bool(video_target.get("display", {}).get("picture_in_picture", {}).get("enabled"))
             native_video = (Path(__file__).resolve().parents[2] / "runtime/video/hpr-video-native.py").is_file()
             if native_video:
-                # The supervisor owns both publishers with or without HDMI.
-                # Retired PiP settings must not resurrect competing USB owners.
+                # The supervisor is the sole USB capture owner for both streams.
                 if video_enabled != current.enabled("video"):
                     changed_units["hpr-video-mediamtx.service"] = video_enabled
                 for camera_name in video_target.get("cameras", {}):
                     changed_units[f"hpr-video-{camera_name}.service"] = False
                 changed_units["hpr-video-compositor.service"] = video_enabled
-            elif rotation_only and not pip_enabled:
+            elif rotation_only:
                 for camera_name in rotation_changed:
                     camera = video_target.get("cameras", {}).get(camera_name, {})
                     changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
             else:
                 changed_units["hpr-video-mediamtx.service"] = video_enabled
-                if pip_enabled:
-                    for camera_name in video_target.get("cameras", {}):
-                        changed_units[f"hpr-video-{camera_name}.service"] = False
-                    changed_units["hpr-video-compositor.service"] = video_enabled
-                else:
-                    changed_units["hpr-video-compositor.service"] = False
-                    for camera_name, camera in video_target.get("cameras", {}).items():
-                        changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
+                changed_units["hpr-video-compositor.service"] = False
+                for camera_name, camera in video_target.get("cameras", {}).items():
+                    changed_units[f"hpr-video-{camera_name}.service"] = video_enabled and bool(camera.get("enabled"))
 
         tpms = profile.get("tpms", {})
         candidate.setdefault("tpms", {})["sensors"] = copy.deepcopy(tpms.get("sensors", {}))

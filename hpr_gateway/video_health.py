@@ -1,4 +1,4 @@
-"""Read native supervisor frame evidence without touching capture or display."""
+"""Read native supervisor frame evidence without touching capture."""
 import json
 import math
 from pathlib import Path
@@ -21,9 +21,6 @@ class VideoEvidence:
             document = json.loads(path.read_text())
             required = [name + '-' + kind for name, camera in config.get('video.cameras', {}).items()
                         if camera.get('enabled') for kind in ('capture', 'publish')]
-            # A disconnected monitor must never make independent streaming fail.
-            if document.get('display_mode') is not None:
-                required.append('display')
             for name in required:
                 sample = document.get('children', {}).get(name, {})
                 frames, stamp, pid = sample.get('frames'), sample.get('at'), sample.get('pid')
@@ -47,6 +44,5 @@ class VideoEvidence:
                 'device': 'online' if good else 'missing_or_stalled', 'data': 'fresh' if good else 'stale',
                 'overall': overall, 'reason': 'frame_progress' if good else 'frame_progress_missing_or_stale',
                 'expected': expected, 'workers': workers, 'error': error,
-                'display_connected': document.get('display_mode') is not None,
-                'scope': 'capture_publisher_progress_not_measured_display_latency',
+                'scope': 'capture_publisher_progress_not_measured_end_to_end_latency',
                 'observed_at': datetime.now(timezone.utc).isoformat()}

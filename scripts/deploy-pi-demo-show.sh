@@ -26,7 +26,6 @@ SERVICE_USER="$(cfg system.service_user --default admin)"
 SERVICE_GROUP="$(cfg system.service_group --default "${SERVICE_USER}")"
 id "${SERVICE_USER}" >/dev/null
 getent group "${SERVICE_GROUP}" >/dev/null
-[[ -f /etc/systemd/system/hpr-video-console.service ]] || { echo 'Missing HDMI console unit' >&2; exit 1; }
 [[ -x /usr/bin/ffmpeg ]] || { echo 'Missing ffmpeg' >&2; exit 1; }
 
 install -d -m 0700 "$BACKUP_ROOT"
